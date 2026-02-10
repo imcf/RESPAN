@@ -15,3 +15,11 @@
 /RESPAN/.pytest_cache
 /RESPAN/__pycache__
 /RESPAN/.idea
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
