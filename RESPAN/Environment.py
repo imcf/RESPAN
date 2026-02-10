@@ -32,27 +32,11 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
-# IPython display helpers are convenient in notebooks but optional for CLI runs
-try:
-    from IPython.display import clear_output, display
-except Exception:
-    # Provide simple fallbacks so RESPAN can run without IPython installed
-    def clear_output(wait=False):
-        # no-op in non-interactive environments
-        return
-
-    def display(*args, **kwargs):
-        # Lightweight fallback: print first positional argument(s)
-        for a in args:
-            try:
-                print(a)
-            except Exception:
-                pass
-
+from IPython.display import clear_output, display
 from matplotlib.pyplot import figure
 from scipy import ndimage as ndi  # Distance transformation
 from skimage import exposure, segmentation
-from skimage.io import imread, imsave, imshow, util
+from skimage.io import imsave, imshow, util
 from skimage.util import img_as_ubyte
 
 # image processing
@@ -72,6 +56,7 @@ import RESPAN.ImageAnalysis.Validation as val
 # Main
 import RESPAN.Main.Main as main
 import RESPAN.Main.Timer as timer
+from RESPAN.ImageAnalysis.IO import imread
 
 # analysis
 

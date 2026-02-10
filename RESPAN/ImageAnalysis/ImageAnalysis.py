@@ -58,13 +58,13 @@ from skimage import (  # graph #util,  color, data, filters,  exposure, restorat
 from skimage.graph import route_through_array
 from skimage.measure import marching_cubes
 from skimage.transform import resize
-from tifffile import imread
 
 import RESPAN.ImageAnalysis.DaskImageAnalysis as dia
 import RESPAN.ImageAnalysis.IO as io
 import RESPAN.ImageAnalysis.MemProfiler as mp
 import RESPAN.ImageAnalysis.Segmentation_and_Restoration as sr
 import RESPAN.ImageAnalysis.Tables as tables
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 GB = 1024**3
@@ -98,12 +98,12 @@ def analyze_spines(settings, locations, log, logger):
     # soma = 3
 
     files = [
-        file_i for file_i in os.listdir(locations.input_dir) if file_i.endswith(".tif")
+        file_i for file_i in os.listdir(locations.input_dir) if io.is_image_file(file_i)
     ]
     files = sorted(files)
 
     label_files = [
-        file_i for file_i in os.listdir(locations.labels) if file_i.endswith(".tif")
+        file_i for file_i in os.listdir(locations.labels) if io.is_image_file(file_i)
     ]
 
     label_files = sorted(label_files)
@@ -3294,21 +3294,19 @@ def extract_subvolumes_mulitchannel_GPU_batch_2ndpass(
 
 def import_tiff_files_to_cupy_list(folder_path):
     """
-    Import all TIFF files from a folder into a list of CuPy arrays.
+    Import all image files from a folder into a list of CuPy arrays.
 
     Returns:
-    list: A list of CuPy arrays, each representing a TIFF file.
+    list: A list of CuPy arrays, each representing an image file.
     """
-    tiff_files = [
-        f for f in os.listdir(folder_path) if f.endswith(".tif") or f.endswith(".tiff")
-    ]
-    tiff_files.sort()  # Ensure consistent ordering
+    image_files = [f for f in os.listdir(folder_path) if io.is_image_file(f)]
+    image_files.sort()  # Ensure consistent ordering
 
     imported_list = []
 
-    for filename in tiff_files:
+    for filename in image_files:
         file_path = os.path.join(folder_path, filename)
-        # Read the TIFF file and convert to CuPy array
+        # Read the file and convert to CuPy array
         image = cp.asarray(imread(file_path))
 
         imported_list.append(image)

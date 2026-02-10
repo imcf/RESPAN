@@ -49,8 +49,9 @@ from skimage import img_as_uint
 from skimage.exposure import rescale_intensity
 from skimage.filters import gaussian
 from tensorflow.keras.callbacks import Callback
-from tifffile import imread
 
+import RESPAN.ImageAnalysis.IO as io
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 ##############################################################################
@@ -217,9 +218,7 @@ def augment_images_v1(input_dir, output_dir, logger, is_low_snr=False, choices=N
     # Process all images with rotation and optional noise/blur
     degrees_list = [90, 180, 270]
     image_paths = [
-        os.path.join(input_dir, f)
-        for f in os.listdir(input_dir)
-        if f.lower().endswith(".tif")
+        os.path.join(input_dir, f) for f in os.listdir(input_dir) if io.is_image_file(f)
     ]
     for degrees in degrees_list:
         for image_path in image_paths:
@@ -236,7 +235,7 @@ def augment_images_v1(input_dir, output_dir, logger, is_low_snr=False, choices=N
 
 def _aug_complete(src_dir, tgt_dir, n_src, n_rot):
     expected = n_src * n_rot
-    tif = lambda d: {f for f in os.listdir(d) if f.lower().endswith(".tif")}
+    tif = lambda d: {f for f in os.listdir(d) if io.is_image_file(f)}
     if not (os.path.isdir(src_dir) and os.path.isdir(tgt_dir)):
         return False
     src_files, tgt_files = tif(src_dir), tif(tgt_dir)
@@ -674,50 +673,6 @@ def train_nnUNet(
         return return_code_train
 
     logger.info("Training complete.")
-
-
-def plan_and_preprocess_only(
-    raw, preprocessed, datasetID, python_path, clean_launcher, plan_bat, logger
-):
-    """Run only the nnUNetv2_plan_and_preprocess step without training.
-
-    This mirrors the plan step used in :func:`train_nnUNet` but performs
-    a single-step operation useful for creating `nnunet_preprocessed`
-    for an existing dataset and model.
-    """
-    # Set environment variables
-    os.environ["nnUNet_raw"] = raw
-    os.environ["nnUNet_preprocessed"] = preprocessed
-
-    cmd_plan = [
-        str(python_path),
-        str(clean_launcher),
-        str(plan_bat),
-        "-d",
-        str(datasetID),
-        "--verify_dataset_integrity",
-    ]
-
-    # Create clean environment but preserve nnUNet variables
-    env = os.environ.copy()
-    env["PYTHONNOUSERSITE"] = "1"
-    env["PYTHONPATH"] = ""
-
-    nnunet_vars = ["nnUNet_raw", "nnUNet_preprocessed", "nnUNet_results"]
-    for var in nnunet_vars:
-        if var in os.environ:
-            env[var] = os.environ[var]
-            logger.info(f"Preserving {var} = {os.environ[var]}")
-
-    logger.info("Running nnUNetv2_plan_and_preprocess (plan only)...")
-    return_code_plan = run_process_with_logging(cmd_plan, logger, env=env)
-
-    if return_code_plan != 0:
-        logger.error(f"Plan and preprocess failed with return code {return_code_plan}")
-        return return_code_plan
-
-    logger.info("Plan and preprocess complete.")
-    return 0
 
 
 def run_process_with_logging(cmd, logger, env=None):

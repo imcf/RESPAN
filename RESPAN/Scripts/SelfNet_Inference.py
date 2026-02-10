@@ -35,9 +35,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from skimage.transform import resize
-from tifffile import imread
 from torch.nn import init
 
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 # Force UTF-8 encoding for frozen applications

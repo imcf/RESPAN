@@ -28,10 +28,11 @@ from csbdeep.models import CARE
 from patchify import patchify
 from skimage import exposure
 from skimage.transform import resize
-from tifffile import imread
 
 import RESPAN.ImageAnalysis.ImageAnalysis as imgan
+import RESPAN.ImageAnalysis.IO as io
 import RESPAN.Main.Main as main
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 #####
@@ -256,7 +257,7 @@ def restore_image(inputdir, settings, locations, logger):
     )
     logger.info("Restoring images with CARE models...")
 
-    files = [file_i for file_i in os.listdir(inputdir) if file_i.endswith(".tif")]
+    files = [file_i for file_i in os.listdir(inputdir) if io.is_image_file(file_i)]
     files = sorted(files)
 
     for file in range(len(files)):
@@ -436,12 +437,12 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
     # data can be raw data OR restored data so check channels
 
     files = [
-        file_i for file_i in os.listdir(locations.input_dir) if file_i.endswith(".tif")
+        file_i for file_i in os.listdir(locations.input_dir) if io.is_image_file(file_i)
     ]
     files = sorted(files)
 
     label_files = [
-        file_i for file_i in os.listdir(locations.labels) if file_i.endswith(".tif")
+        file_i for file_i in os.listdir(locations.labels) if io.is_image_file(file_i)
     ]
 
     # create empty arrays to capture dims and padding info
@@ -537,12 +538,12 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
 
             # logger.info(f" ")
             # save neuron as a tif file in nnUnet_input - if file doesn't end with 0000 add that at the end
-            name, ext = os.path.splitext(files[file])
+            name, _ = os.path.splitext(files[file])
 
             if not name.endswith("0000"):
                 name += "_0000"
 
-            new_filename = name + ext
+            new_filename = name + ".tif"
 
             filepath = locations.nnUnet_input + new_filename
 

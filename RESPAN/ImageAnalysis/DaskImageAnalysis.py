@@ -62,12 +62,12 @@ from scipy.ndimage import distance_transform_edt, generate_binary_structure
 from scipy.spatial import cKDTree
 from skimage import measure, morphology, segmentation
 from skimage.measure._regionprops import RegionProperties
-from tifffile import imread
 from zarr.errors import ArrayNotFoundError
 
 import RESPAN.ImageAnalysis.ImageAnalysis as imgan
 import RESPAN.ImageAnalysis.IO as io
 import RESPAN.ImageAnalysis.Tables as tables
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 try:
@@ -527,45 +527,36 @@ def open_tiff_as_dask(
     converting the TIFF the first time we see it.  Any *incomplete* store
     is deleted and rebuilt automatically.
     """
-
     z_path = Path(tiff_path).with_suffix(".ome.zarr")
 
     if (z_path / "0" / ".zarray").exists():
         return da.from_zarr(str(z_path), component="0"), z_path
 
-        # -- build cache on-demand ---------------------------------------------
+    # -- build cache on-demand ---------------------------------------------
     if resave:
-        if resave:
-            axes_format, success = tiff_to_ome_zarr(
-                str(tiff_path),
-                str(z_path),
-                chunks=_flatten(chunks),
-                pixel_sizes=pixel_sizes,
-                logger=logger,
-            )
-            if success:
-                # Load the data
-                labels = da.from_zarr(str(z_path), component="0")
-
-                # Handle either ZYX or CZYX format
-                if axes_format == "czyx":
-                    # If it has a channel dimension, remove it
-                    labels = labels[0, :, :, :]  # remove channel dimension
-                else:
-                    # Already in ZYX format, no need to remove channel
-                    pass
-        return da.from_zarr(str(z_path), component="0"), z_path
+        axes_format, success = image_to_ome_zarr(
+            str(tiff_path),
+            str(z_path),
+            chunks=_flatten(chunks),
+            pixel_sizes=pixel_sizes,
+            logger=logger,
+        )
+        if success:
+            arr = da.from_zarr(str(z_path), component="0")
+            if axes_format == "czyx" and arr.ndim == 4:
+                arr = arr[0]
+            return arr, z_path
 
     # -- no cache requested → lazy TIFF read -------------------------------
     with tifffile.TiffFile(tiff_path) as tf:
         z_in = zarr.open(tf.series[0].aszarr(), mode="r")
         img = da.from_array(z_in, chunks=_flatten(chunks))
 
-    return img, None  # keep the same 2-tuple contract
+    return img, None
 
 
-def tiff_to_ome_zarr(
-    tiff_path,
+def image_to_ome_zarr(
+    image_path,
     zarr_root,
     *,
     chunks: tuple[int, ...] = (1, 64, 512, 512),  # (C,Z,Y,X)
@@ -574,18 +565,16 @@ def tiff_to_ome_zarr(
     overwrite: bool = False,
     logger=None,
     show_pb: bool = True,  # progress-bar flag
-) -> None:
+) -> tuple[str, bool]:
     """
-    Convert *tiff_path* → *zarr_root*/0 (OME-Zarr, level-0, no Dask).
-
-    • ≤ _SMALL_VOL (200 MiB)  →  one-shot write.
-    • larger volumes          →  streamed in blocks of *chunks[1]* Z-slices
-                                  (per-channel when C present).
-
-    Designed for Python 3.9, Windows/Linux, low-RAM boxes and workstations.
+    Convert any supported image → *zarr_root*/0 (OME-Zarr, level-0).
+    Uses AICSImageIO for broad format support.
     """
+    from aicsimageio import AICSImage
+    from ome_zarr.writer import write_image
+
     # ── paths & early-exit ──────────────────────────────────────────────
-    tiff_path = Path(tiff_path)
+    image_path = Path(image_path)
     zarr_root = Path(zarr_root)
 
     # ── fast-exit ──────────────────────────────────────────────────────────
@@ -598,7 +587,6 @@ def tiff_to_ome_zarr(
                 if "multiscales" in z.attrs:
                     axes_meta = z.attrs["multiscales"][0]["axes"]
                     axes = "".join(axis["name"] for axis in axes_meta)
-                    has_c = "c" in axes
                     return axes, True
         except Exception:
             # If we can't determine, assume CZYX as default
@@ -609,111 +597,91 @@ def tiff_to_ome_zarr(
     zarr_root.parent.mkdir(parents=True, exist_ok=True)
 
     # ---------------------------------------------------------------------#
-    #  Read TIFF header once
+    #  Read Image using AICSImageIO
     # ---------------------------------------------------------------------#
     try:
-        with tifffile.TiffFile(tiff_path) as tf:
-            series = tf.series[0]
-            shape = series.shape  # Z Y X  or  C Z Y X
-            dtype = series.dtype
-            nbytes = math.prod(shape) * dtype.itemsize
+        img = AICSImage(image_path)
+        # We target CZYX for RESPAN compatibility
+        # T is handled by taking T=0 (first timepoint) for now
+        data = img.get_image_data("CZYX", T=0)
+        shape = data.shape  # C Z Y X
+        dtype = data.dtype
+        nbytes = (
+            data.nbytes if hasattr(data, "nbytes") else (math.prod(shape) * dtype.itemsize)
+        )
+        axes = "czyx"
 
-            # axis handling ----------------------------------------------------
-            if len(shape) == 3:  # Z Y X
-                axes, need_c = "zyx", False
-            elif len(shape) == 4:  # C Z Y X
-                axes, need_c = "czyx", True
-            else:
-                raise ValueError(f"unsupported TIFF dimensions {shape}")
+        # Ensure chunks match dimensionality
+        if isinstance(chunks, tuple):
+            chunks = _flatten(chunks)
+            if len(chunks) > len(shape):
+                chunks = chunks[-len(shape) :]
+            elif len(chunks) < len(shape):
+                chunks = (1,) * (len(shape) - len(chunks)) + chunks
 
-            # -----------------------------------------------------------------#
-            #  SMALL VOLUME – single writer call
-            # -----------------------------------------------------------------#
-            if nbytes <= _SMALL_VOL:
-                data = series.asarray(out="memmap")
-                root = zarr.group(store=parse_url(str(zarr_root), mode="w").store)
-                # write_multiscales_metadata is not needed; writer makes it.
-                from ome_zarr.writer import write_image
+        root = zarr.group(store=parse_url(str(zarr_root), mode="w").store)
 
-                write_image(
-                    image=data,
-                    group=root,
-                    axes=axes,
-                    chunks=chunks,
-                    pixel_sizes=pixel_sizes,
-                    storage_options={"compressor": compressor},
-                    compute=True,
-                    scaler=None,
-                )
-                if logger:
-                    logger.info(f"      Created: {zarr_root}")
-                return axes, True
-
-            # -----------------------------------------------------------------#
-            #  LARGE VOLUME – streamed copy
-            # -----------------------------------------------------------------#
-            root = zarr.group(store=parse_url(str(zarr_root), mode="w").store)
-            z_arr = root.create_dataset(
-                "0",
-                shape=shape,
-                chunks=chunks[: len(shape)],  # Ensure chunks match dimensionality
-                dtype=dtype,
-                compressor=compressor,
-                overwrite=True,
+        # -----------------------------------------------------------------#
+        #  SMALL VOLUME – single writer call
+        # -----------------------------------------------------------------#
+        if nbytes <= _SMALL_VOL:
+            if hasattr(data, "compute"):
+                data = data.compute()
+            write_image(
+                image=data,
+                group=root,
+                axes=axes,
+                chunks=chunks,
+                pixel_sizes=pixel_sizes,
+                storage_options={"compressor": compressor},
+                compute=True,
+                scaler=None,
             )
-
-            # progress bar -----------------------------------------------------
-            prog = None
-            if show_pb:
-                try:
-                    from tqdm import tqdm
-
-                    total = shape[0] * shape[1] if need_c else shape[0]
-                    prog = tqdm(total=total, unit="slice", desc="OME-Zarr")
-                except ModuleNotFoundError:
-                    prog = None
-
-            # choose Z-block size (<= chunks[1] to limit RAM)
-            block_z = chunks[1] if need_c else chunks[0]
-            block_z = max(1, block_z)
-
-            if need_c:  # C Z Y X
-                for c in range(shape[0]):
-                    for z0 in range(0, shape[1], block_z):
-                        z1 = min(z0 + block_z, shape[1])
-                        block = series.asarray(key=(c, slice(z0, z1)))
-                        z_arr[c, z0:z1, :, :] = block
-                        if prog:
-                            prog.update(z1 - z0)
-            else:  # Z Y X
-                for z0 in range(0, shape[0], block_z):
-                    z1 = min(z0 + block_z, shape[0])
-                    block = series.asarray(key=slice(z0, z1))
-                    z_arr[z0:z1, :, :] = block
-                    if prog:
-                        prog.update(z1 - z0)
-
-            if prog:
-                prog.close()
-
-            # -----------------------------------------------------------------#
-            #  Attach NGFF metadata
-            # -----------------------------------------------------------------#
-            axes_meta, datasets_meta = _axes_and_transform(axes)
-            write_multiscales_metadata(root, datasets_meta, axes=axes_meta)
-            if pixel_sizes:
-                # write_multiscales_metadata already stores pixel size if given
-                root.attrs["multiscales"][0]["datasets"][0][
-                    "coordinateTransformations"
-                ][0]["scale"] = list(pixel_sizes)
-
             if logger:
-                logger.info(f"[OME-Zarr] wrote {zarr_root}")
-
+                logger.info(f"      Created: {zarr_root}")
             return axes, True
+
+        # -----------------------------------------------------------------#
+        #  LARGE VOLUME – delayed write
+        # -----------------------------------------------------------------#
+        delayed = write_image(
+            image=data,
+            group=root,
+            axes=axes,
+            chunks=chunks,
+            pixel_sizes=pixel_sizes,
+            storage_options={"compressor": compressor},
+            compute=False,
+            scaler=None,
+        )
+
+        ctx = (
+            ProgressBar(out=_LoggerWriter(logger))
+            if show_pb and logger
+            else ProgressBar()
+            if show_pb
+            else nullcontext()
+        )
+
+        with ctx:
+            try:
+                client = get_client()  # distributed present
+                fut = client.compute(delayed, retries=0)
+                wait(fut)  # <-- block until finished
+            except (ValueError, RuntimeError):  # no client → local threads
+                dask.compute(
+                    delayed,
+                    scheduler="threads",
+                    pool=ThreadPool(min(os.cpu_count() or 1, 16)),
+                )
+
+        if logger:
+            logger.info(f"[OME-Zarr] wrote {zarr_root}")
+
+        return axes, True
     except Exception as e:
         if logger:
-            logger.error(f"Error in tiff_to_ome_zarr: {str(e)}")
+            logger.error(f"Error in image_to_ome_zarr: {str(e)}")
         # Clean up partial conversion
         if zarr_root.exists():
             try:
@@ -757,7 +725,7 @@ def save_volume_to_omezarr(
 ):
     """
     Persist *arr* in NGFF layout  <zroot>/0  (multiscales + dataset “0”).
-    Logic mirrors `tiff_to_ome_zarr` – one-shot write for ≤200 MiB,
+    Logic mirrors `image_to_ome_zarr` – one-shot write for ≤200 MiB,
     Dask-delayed write otherwise.
     """
     try:

@@ -6,4 +6,40 @@ build-backend = "setuptools.build_meta"
 name = "respan"
 version = "0.1.0"
 description = "RESPAN - Restoration Enhanced Neuron and Spine Analysis"
+readme = "README.md"
+authors = [{ name = "Luke Hammond", email = "luke.hammond@osumc.edu" }]
+license = { text = "MIT" }
 requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "tensorflow==2.18.1",
+    "numpy>=1.26,<2.1",
+    "tifffile",
+    "csbdeep",
+    "scikit-image",
+    "scipy",
+    "matplotlib",
+    "pyqt5",
+    "opencv-python",
+    "dask",
+    "zarr",
+    "pandas",
+    "pyyaml",
+    "nnunetv2",
+    "aicsimageio",
+    "bioio",
+    "bioio-tifffile",
+    "patchify",
+    "memory_profiler",
+    "psutil",
+    "trimesh",
+    "numba",
+    "ome-zarr",
+    "cupy-cuda12x"
+]
+
+[project.scripts]
+respan = "RESPAN.Scripts.RESPAN_GUI_DIST:RESPAN_gui"

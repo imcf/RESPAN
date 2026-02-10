@@ -1,6 +1,52 @@
 import numpy as np
+from aicsimageio import AICSImage
 
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
+
+SUPPORTED_EXTENSIONS = (
+    ".tif",
+    ".tiff",
+    ".czi",
+    ".nd2",
+    ".lif",
+    ".vsi",
+    ".ims",
+    ".oib",
+    ".oif",
+    ".ndpi",
+    ".vms",
+    ".svs",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+)
+
+
+def is_image_file(filename):
+    """
+    Check if a file is a supported image format.
+    """
+    return filename.lower().endswith(SUPPORTED_EXTENSIONS)
+
+
+def imread(path, logger=None):
+    """
+    Read an image from disk using AICSImageIO.
+    Supports many formats (.czi, .nd2, .lif, .tif, etc.)
+    Returns a numpy array in ZCYX format if possible.
+    """
+    if logger:
+        logger.info(f"  Reading image with AICSImageIO: {path}")
+
+    img = AICSImage(path)
+
+    # RESPAN generally expects ZCYX or CZYX and uses check_image_shape to normalize.
+    # We'll provide ZCYX as a sensible default for AICSImageIO to match common expectations.
+    # S=0, T=0 for first scene/timepoint.
+    data = img.get_image_data("ZCYX", S=0, T=0)
+
+    return data
 
 
 def create_and_save_multichannel_tiff(images_3d, filename, bitdepth, settings):

@@ -1,7 +1,8 @@
 import os
 import numpy as np
-import tifffile
 import csv
+
+from RESPAN.ImageAnalysis.IO import imread
 #from collections import defaultdict
 
 
@@ -13,8 +14,8 @@ def calculate_dice_score(image1, image2, intensity):
 
 
 def process_image_pair(image1_path, image2_path, num_intensities):
-    image1 = tifffile.imread(image1_path)
-    image2 = tifffile.imread(image2_path)
+    image1 = imread(image1_path)
+    image2 = imread(image2_path)
 
     if image1.shape != image2.shape:
         raise ValueError(f"Images {image1_path} and {image2_path} must have the same dimensions")

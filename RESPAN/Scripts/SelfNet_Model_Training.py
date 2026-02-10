@@ -34,10 +34,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from skimage.transform import resize
-from tifffile import imread
 from torch.nn import init
 from torch.utils.data import Dataset
 
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 """
