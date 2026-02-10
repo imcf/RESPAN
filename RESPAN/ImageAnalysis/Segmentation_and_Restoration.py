@@ -6,45 +6,44 @@ UNet and Restoration functions for spine analysis
 
 """
 
-__author__    = 'Luke Hammond <luke.hammond@osumc.edu>'
-__license__   = 'GPL-3.0 License (see LICENSE)'
-__copyright__ = 'Copyright © 2024 by Luke Hammond'
-__download__  = 'http://www.github.com/lahmmond/RESPAN'
+__author__ = "Luke Hammond <luke.hammond@osumc.edu>"
+__license__ = "GPL-3.0 License (see LICENSE)"
+__copyright__ = "Copyright © 2024 by Luke Hammond"
+__download__ = "http://www.github.com/lahmmond/RESPAN"
 
-import RESPAN.Main.Main as main
-import RESPAN.ImageAnalysis.ImageAnalysis as imgan
-
-
+import contextlib
+import json
 import os
-import numpy as np
-import warnings
 import re
 import shutil
-import sys
-import contextlib
-import time
-
-from pathlib import Path
 import subprocess
+import sys
 import threading
-from patchify import patchify
+import time
+import warnings
+from pathlib import Path
 
-from tifffile import imread, imwrite
+import numpy as np
+from csbdeep.models import CARE
+from patchify import patchify
 from skimage import exposure
 from skimage.transform import resize
+from tifffile import imread
 
-from csbdeep.models import CARE
-import json
+import RESPAN.ImageAnalysis.ImageAnalysis as imgan
+import RESPAN.Main.Main as main
+from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 #####
 # to prevent tqdm progress bar conflicting with GUI (CARE predict function issue)
+
 
 @contextlib.contextmanager
 def suppress_all_output():
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     try:
-        with open(os.devnull, 'w') as devnull:
+        with open(os.devnull, "w") as devnull:
             sys.stdout = devnull
             sys.stderr = devnull
             yield
@@ -66,13 +65,12 @@ def restore_and_segment(settings, locations, logger):
     if settings.image_restore == False and settings.axial_restore == True:
         # restore axial resolution from raw data
         axial_restore_image(locations.input_dir, settings, locations, logger)
-        data = locations.restored + '/selfnet/'
-
+        data = locations.restored + "/selfnet/"
 
     elif settings.image_restore == True and settings.axial_restore == True:
         # restore axial resolution on CARE restored data
         axial_restore_image(data, settings, locations, logger)
-        data = locations.restored + '/selfnet/'
+        data = locations.restored + "/selfnet/"
 
     else:
         data = locations.input_dir
@@ -83,7 +81,6 @@ def restore_and_segment(settings, locations, logger):
     log = nnunet_create_labels(data, settings, locations, logger)
 
     return log
-
 
 
 ##############################################################################
@@ -99,8 +96,9 @@ def run_external_script(script_path, py_path, args):
 
     print("Executing: %s", " ".join(cmd))
 
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True) as proc:
+    with subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ) as proc:
         for line in proc.stdout:
             print(line.rstrip())
         if proc.wait():
@@ -108,16 +106,15 @@ def run_external_script(script_path, py_path, args):
 
 
 def run_external_script_prev(script_path, conda_env, args_dict):
-    args_str = ' '.join(f'--{k} "{v}"' for k, v in args_dict.items())
+    args_str = " ".join(f'--{k} "{v}"' for k, v in args_dict.items())
     command = f'conda run -n {conda_env} python "{script_path}" {args_str}'
     process = subprocess.Popen(command, shell=True)
     process.wait()
 
 
-
 def clean_percentage_line(line):
     # Extract percentage and time
-    match = re.search(r'(\d+)%.*?([\d:]+)', line)
+    match = re.search(r"(\d+)%.*?([\d:]+)", line)
     if match:
         percentage, time = match.groups()
         return f"{percentage}% [Time left: {time}]"
@@ -133,30 +130,32 @@ def log_output(pipe, logger, buffer):
 
             if isinstance(line, bytes):
                 try:
-                    decoded_line = line.decode('utf-8').strip()
+                    decoded_line = line.decode("utf-8").strip()
                 except UnicodeDecodeError:
-                    decoded_line = line.decode('latin-1', errors='replace').strip()
+                    decoded_line = line.decode("latin-1", errors="replace").strip()
             else:
                 decoded_line = line.strip()
 
             # Append all output to the buffer
-            buffer.append(decoded_line + '\n')
+            buffer.append(decoded_line + "\n")
             print50 = 0
             # Clean and filter the output
             if "%" in decoded_line:
                 cleaned_line = clean_percentage_line(decoded_line)
-                if "50%" in cleaned_line and print50 == 0:# or "100%" in cleaned_line:
+                if "50%" in cleaned_line and print50 == 0:  # or "100%" in cleaned_line:
                     logger.info(f"   {cleaned_line}")
                     print(cleaned_line, flush=True)
                     print50 = 1
-            elif decoded_line.lower().startswith(("predicting", "done")) or re.match(r'^\d+', decoded_line):
+            elif decoded_line.lower().startswith(("predicting", "done")) or re.match(
+                r"^\d+", decoded_line
+            ):
                 logger.info(f"   {decoded_line}")
                 print(decoded_line, flush=True)
 
         except Exception as e:
             print("")
-            #print(f"Error processing line: {str(e)}", flush=True)
-            #logger.error(f"Error processing line: {str(e)}")
+            # print(f"Error processing line: {str(e)}", flush=True)
+            # logger.error(f"Error processing line: {str(e)}")
 
 
 ##############################################################################
@@ -165,11 +164,16 @@ def log_output(pipe, logger, buffer):
 
 
 def axial_restore_image(inputdir, settings, locations, logger):
-    logger.info("-----------------------------------------------------------------------------------------------------")
-    logger.info("Performing SelfNet axial restoration neuron channel...")
-    logger.info("   ** Be aware that SelfNet restoration greatly increases file size (up to 10x) **")
     logger.info(
-        "   As a result, storage requirements must account for this, and processing time will be increased accordingly.")
+        "-----------------------------------------------------------------------------------------------------"
+    )
+    logger.info("Performing SelfNet axial restoration neuron channel...")
+    logger.info(
+        "   ** Be aware that SelfNet restoration greatly increases file size (up to 10x) **"
+    )
+    logger.info(
+        "   As a result, storage requirements must account for this, and processing time will be increased accordingly."
+    )
     # SelfNet Inference
     # nnunet_env = 'nnunet' # may need to provide conda dir for max compat
     # model path should be the most recent file in saved models checkpoint
@@ -178,7 +182,6 @@ def axial_restore_image(inputdir, settings, locations, logger):
 
     # find most recent pkl file in model_dir and update that to be the model path
     if settings.selfnet_path != None:
-
         # parser.add_argument('--input_dir', type=str, required=True, help='The input directory')
         # parser.add_argument('--neuron_ch', type=int, default=0, help='the channel for inference')
         # parser.add_argument('--model_path', type=str, required=True, help='The model path')
@@ -188,37 +191,43 @@ def axial_restore_image(inputdir, settings, locations, logger):
         # parser.add_argument('--z_step', type=int, default=1, help='The final z-resolution')
 
         args_dict = {
-            'input_dir': inputdir,
-            'neuron_ch': settings.neuron_channel - 1,
-            'model_path': settings.selfnet_path,
-            'min_v': 0,
-            'max_v': 65535,
-            'scale': settings.input_resXY,
-            'z_step': settings.input_resZ
+            "input_dir": inputdir,
+            "neuron_ch": settings.neuron_channel - 1,
+            "model_path": settings.selfnet_path,
+            "min_v": 0,
+            "max_v": 65535,
+            "scale": settings.input_resXY,
+            "z_step": settings.input_resZ,
         }
         # logger info all args_dict
 
-        logger.info(f"\n   Input xy-resolution: {settings.input_resXY}. Input Z resolution: {settings.input_resZ}")
+        logger.info(
+            f"\n   Input xy-resolution: {settings.input_resXY}. Input Z resolution: {settings.input_resZ}"
+        )
         logger.info(f"   Final z-resolution: {settings.input_resXY}")
 
         run_external_script(
-            settings.selfnet_inference_script,
-            settings.internal_py_path, args_dict)
+            settings.selfnet_inference_script, settings.internal_py_path, args_dict
+        )
 
         # update resolution for remaing calculations
         settings.input_resZ = settings.input_resXY
-        logger.info(
-            "Restoration complete.")
+        logger.info("Restoration complete.")
         # logger.info(settings.input_resZ)
 
     else:
-        logger.info("SelfNet model path not found in settings file, update settings file - skipping axial restoration.")
+        logger.info(
+            "SelfNet model path not found in settings file, update settings file - skipping axial restoration."
+        )
 
     logger.info(
-        "-----------------------------------------------------------------------------------------------------")
+        "-----------------------------------------------------------------------------------------------------"
+    )
 
 
-def selfnet_inference(script_path, respan_env, model_dir, min_v, max_v, scale, z_step, settings):
+def selfnet_inference(
+    script_path, respan_env, model_dir, min_v, max_v, scale, z_step, settings
+):
     # nnunet_env = 'nnunet' # may need to provide conda dir for max compat
     # model path should be the most recent file in saved models checkpoint
     # update the training file to take this file and place it somewhere safe
@@ -226,43 +235,47 @@ def selfnet_inference(script_path, respan_env, model_dir, min_v, max_v, scale, z
 
     # find most recent pkl file in model_dir and update that to be the model path
     args_dict = {
-        'input_dir': input,
-        'model_path': model_dir,
-        'min_v': min_v,
-        'max_v': max_v,
-        'scale': scale,
-        'z_step': z_step
+        "input_dir": input,
+        "model_path": model_dir,
+        "min_v": min_v,
+        "max_v": max_v,
+        "scale": scale,
+        "z_step": z_step,
     }
-    run_external_script(
-        script_path,
-        settings.internal_py_path, args_dict)
+    run_external_script(script_path, settings.internal_py_path, args_dict)
 
 
 ##############################################################################
 # CARE Restoration
 ##############################################################################
 
+
 def restore_image(inputdir, settings, locations, logger):
-    logger.info("-----------------------------------------------------------------------------------------------------")
+    logger.info(
+        "-----------------------------------------------------------------------------------------------------"
+    )
     logger.info("Restoring images with CARE models...")
 
-    files = [file_i for file_i in os.listdir(inputdir) if file_i.endswith('.tif')]
+    files = [file_i for file_i in os.listdir(inputdir) if file_i.endswith(".tif")]
     files = sorted(files)
 
     for file in range(len(files)):
-        logger.info(f' Restoring image {files[file]} ')
+        logger.info(f" Restoring image {files[file]} ")
 
         image = imread(inputdir + files[file])
         logger.info(f"  Raw data has shape {image.shape}")
 
         image = imgan.check_image_shape(image, logger)
 
-        restored = np.empty((image.shape[0], image.shape[1], image.shape[2], image.shape[3]), dtype=np.uint16)
+        restored = np.empty(
+            (image.shape[0], image.shape[1], image.shape[2], image.shape[3]),
+            dtype=np.uint16,
+        )
 
         for channel in range(image.shape[1]):
-            restore_on = getattr(settings, f'c{channel + 1}_restore', None)
-            rest_model_path = getattr(settings, f'c{channel + 1}_rest_model_path', None)
-            rest_type = getattr(settings, f'c{channel + 1}_rest_type', None)
+            restore_on = getattr(settings, f"c{channel + 1}_restore", None)
+            rest_model_path = getattr(settings, f"c{channel + 1}_rest_model_path", None)
+            rest_type = getattr(settings, f"c{channel + 1}_rest_type", None)
             if restore_on == True and rest_model_path != None:
                 logger.info(f"  Restoring channel {channel + 1}")
                 logger.info(f"  Restoration model = {rest_model_path}\n  ---")
@@ -272,42 +285,65 @@ def restore_image(inputdir, settings, locations, logger):
                 # find min int above zero and use this to replace all zero values
                 min_intensity = np.min(channel_image[np.nonzero(channel_image)])
                 max_intensity = np.max(channel_image)
-                logger.info(f"  Pre restoration min intensity: {min_intensity}, max intensity: {max_intensity}")
+                logger.info(
+                    f"  Pre restoration min intensity: {min_intensity}, max intensity: {max_intensity}"
+                )
 
-                channel_image = np.where(channel_image == 0, min_intensity, channel_image)
+                channel_image = np.where(
+                    channel_image == 0, min_intensity, channel_image
+                )
 
-                if rest_type[0] == 'care':
+                if rest_type[0] == "care":
                     if os.path.isdir(rest_model_path) is False:
-                        raise RuntimeError(rest_model_path, "not found, check settings and model directory")
+                        raise RuntimeError(
+                            rest_model_path,
+                            "not found, check settings and model directory",
+                        )
                     rest_model = CARE(config=None, name=rest_model_path)
 
                     # restored = np.empty((channel_image.shape[0], channel_image.shape[1], channel_image.shape[2]), dtype=np.uint16)
 
                     with suppress_all_output(), main.HiddenPrints():
-
                         # restore image
-                        restored_channel = rest_model.predict(channel_image, axes='ZYX',
-                                                              n_tiles=settings.tiles_for_prediction)
+                        restored_channel = rest_model.predict(
+                            channel_image,
+                            axes="ZYX",
+                            n_tiles=settings.tiles_for_prediction,
+                        )
 
                         # convert to 16bit
                         restored_channel = restored_channel.astype(np.uint16)
-                        #set intensities 10% above original max ints to min_intensity
-                        restored_channel = np.where(restored_channel > max_intensity * 1.2, min_intensity, restored_channel)
-
+                        # set intensities 10% above original max ints to min_intensity
+                        restored_channel = np.where(
+                            restored_channel > max_intensity * 1.2,
+                            min_intensity,
+                            restored_channel,
+                        )
 
                         restored[:, channel, :, :] = restored_channel
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             if settings.validation_format == "tif":
-                imwrite(locations.restored + files[file], restored, compression=('zlib', 1), imagej=True,
-                        photometric='minisblack',
-                        metadata={'spacing': settings.input_resZ, 'unit': 'um', 'axes': 'ZCYX', 'mode': 'composite'},
-                        resolution=(settings.input_resXY, settings.input_resXY))
+                imwrite(
+                    locations.restored + files[file],
+                    restored,
+                    compression="zlib",
+                    compressionargs=1,
+                    imagej=True,
+                    photometric="minisblack",
+                    metadata={
+                        "spacing": settings.input_resZ,
+                        "unit": "um",
+                        "axes": "ZCYX",
+                        "mode": "composite",
+                    },
+                    resolution=(settings.input_resXY, settings.input_resXY),
+                )
 
     logger.info(
-        "Restoration complete.\n\n-----------------------------------------------------------------------------------------------------")
-
+        "Restoration complete.\n\n-----------------------------------------------------------------------------------------------------"
+    )
 
 
 ##############################################################################
@@ -316,13 +352,59 @@ def restore_image(inputdir, settings, locations, logger):
 
 
 def initialize_nnUnet(settings, logger):
-    #not worrying about setting raw and processed, as not needed and would rquire additional params for user/settings file
-    #os.environ['nnUNet_raw'] = settings.nnUnet_raw
-    #os.environ['nnUNet_preprocessed'] = settings.nnUnet_preprocessed
+    """Initialize NNUNet environment variables.
+
+    Sets `nnUNet_results` (required) and attempts to set `nnUNet_preprocessed`
+    and `nnUNet_raw` intelligently from settings or by searching common
+    locations. If preprocessed/raw data cannot be found, logs a clear
+    instruction so the user can set the environment manually.
+    """
+    # Results path (always set from model location)
     nnUnet_results = Path(settings.neuron_seg_model_path).parent
     nnUnet_results = str(nnUnet_results).replace("\\", "/")
-    os.environ['nnUNet_results'] = nnUnet_results
+    os.environ["nnUNet_results"] = nnUnet_results
+    logger.info(f"Set nnUNet_results = {nnUnet_results}")
 
+    # Helper to set env var if we can find a suitable directory
+    def _try_set_env_var(varname, candidate):
+        if candidate and os.path.exists(candidate):
+            os.environ[varname] = str(candidate).replace("\\", "/")
+            logger.info(f"Set {varname} = {os.environ[varname]}")
+            return True
+        return False
+
+    # 1) Prefer explicit settings fields if present
+    if getattr(settings, "nnUnet_preprocessed", None):
+        if _try_set_env_var("nnUNet_preprocessed", settings.nnUnet_preprocessed):
+            return
+    if getattr(settings, "nnUnet_raw", None):
+        _try_set_env_var("nnUNet_raw", settings.nnUnet_raw)
+
+    # 2) Look for a sibling directory named 'nnunet_preprocessed' next to results
+    parent = Path(nnUnet_results).parent
+    preprocessed_guess = parent / "nnunet_preprocessed"
+    if _try_set_env_var("nnUNet_preprocessed", preprocessed_guess):
+        return
+
+    # 3) Look for a folder that contains 'nnunet_preprocessed' anywhere up to two levels up
+    for level in range(1, 3):
+        candidate = Path(nnUnet_results)
+        for _ in range(level):
+            candidate = candidate.parent
+        maybe = candidate / "nnunet_preprocessed"
+        if _try_set_env_var("nnUNet_preprocessed", maybe):
+            return
+
+    # 4) If we couldn't find preprocessed/raw, log a clear actionable message
+    logger.info(
+        "nnUNet_preprocessed and nnUNet_raw not found automatically. "
+        "If you have preprocessed nnU-Net data for your model (required for prediction), "
+        "please set environment variables `nnUNet_preprocessed` and optionally `nnUNet_raw` before launching RESPAN."
+    )
+    logger.info(
+        "Example (bash):\n  export nnUNet_preprocessed=/path/to/nnunet_preprocessed\n  export nnUNet_raw=/path/to/nnunet_raw\n"
+        "Or run nnUNet plan & preprocess on your dataset with `nnUNetv2_plan_and_preprocess` and set the env var to the resulting folder."
+    )
 
 
 def nnunet_create_labels(inputdir, settings, locations, logger):
@@ -332,29 +414,35 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
     settings.rescale_req = False
 
     # check if rescaling required and create scaling factors
-    if settings.input_resZ != settings.model_resZ or settings.input_resXY != settings.model_resXY:
+    if (
+        settings.input_resZ != settings.model_resZ
+        or settings.input_resXY != settings.model_resXY
+    ):
         logger.info(f"  Images will be rescaled to match network.")
 
         settings.rescale_req = True
         # z in / z desired, y in / desired ...
-        settings.scaling_factors = (settings.input_resZ / settings.model_resZ,
-                                    settings.input_resXY / settings.model_resXY,
-                                    settings.input_resXY / settings.model_resXY)
+        settings.scaling_factors = (
+            settings.input_resZ / settings.model_resZ,
+            settings.input_resXY / settings.model_resXY,
+            settings.input_resXY / settings.model_resXY,
+        )
         # settings.inverse_scaling_factors = tuple(1/np.array(settings.scaling_factors))
 
         logger.info(
-            f"  Scaling factors: Z = {round(settings.scaling_factors[0], 2)} Y = {round(settings.scaling_factors[1], 2)} X = {round(settings.scaling_factors[2], 2)} ")
+            f"  Scaling factors: Z = {round(settings.scaling_factors[0], 2)} Y = {round(settings.scaling_factors[1], 2)} X = {round(settings.scaling_factors[2], 2)} "
+        )
 
     # data can be raw data OR restored data so check channels
 
-    files = [file_i
-             for file_i in os.listdir(locations.input_dir)
-             if file_i.endswith('.tif')]
+    files = [
+        file_i for file_i in os.listdir(locations.input_dir) if file_i.endswith(".tif")
+    ]
     files = sorted(files)
 
-    label_files = [file_i
-                   for file_i in os.listdir(locations.labels)
-                   if file_i.endswith('.tif')]
+    label_files = [
+        file_i for file_i in os.listdir(locations.labels) if file_i.endswith(".tif")
+    ]
 
     # create empty arrays to capture dims and padding info
     settings.original_shape = [None] * len(files)
@@ -362,13 +450,13 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
 
     if len(files) == len(label_files):
         logger.info(
-            f"  *Spines and dendrites already detected. \nDelete \Validation_Data\Segmentation_Labels if you wish to regenerate.")
+            f"  *Spines and dendrites already detected. \nDelete \Validation_Data\Segmentation_Labels if you wish to regenerate."
+        )
         stdout = None
         settings.prev_labels = True
 
         return_code = 0
     else:
-
         # Prepare Raw data for nnUnet
 
         # Initialize reference to None - if using histogram matching
@@ -377,7 +465,9 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
         settings.prev_labels = False
 
         for file in range(len(files)):
-            logger.info(f"   Preparing image {file + 1} of {len(files)} - {files[file]}")
+            logger.info(
+                f"   Preparing image {file + 1} of {len(files)} - {files[file]}"
+            )
 
             image = imread(inputdir + files[file])
             logger.info(f"   Raw data has shape: {image.shape}")
@@ -390,18 +480,33 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 neuron = image[:, settings.neuron_channel - 1, :, :]
 
             # rescale if required by model
-            if settings.input_resZ != settings.model_resZ or settings.input_resXY != settings.model_resXY:
+            if (
+                settings.input_resZ != settings.model_resZ
+                or settings.input_resXY != settings.model_resXY
+            ):
                 settings.original_shape[file] = neuron.shape
                 # new_shape = (int(neuron.shape[0] * settings.scaling_factors[0]), neuron.shape[1] * settings.scaling_factors[1]), neuron.shape[2] * settings.scaling_factors[2]))
-                new_shape = tuple(int(dim * factor) for dim, factor in zip(neuron.shape, settings.scaling_factors))
-                neuron = resize(neuron, new_shape, mode='constant', preserve_range=True, anti_aliasing=True)
-                logger.info(f"   Data rescaled to match model for labeling has shape: {neuron.shape}")
+                new_shape = tuple(
+                    int(dim * factor)
+                    for dim, factor in zip(neuron.shape, settings.scaling_factors)
+                )
+                neuron = resize(
+                    neuron,
+                    new_shape,
+                    mode="constant",
+                    preserve_range=True,
+                    anti_aliasing=True,
+                )
+                logger.info(
+                    f"   Data rescaled to match model for labeling has shape: {neuron.shape}"
+                )
 
             # logger.info the  it will take for processing image by dividing the number of pixels by a scaling factor
             # limit variable to 2 decimal places
 
             logger.info(
-                f"   Estimated time to detect spines and dendrites for this image: {round(neuron.size * 2.5e-8, 2)} minutes.\n")
+                f"   Estimated time to detect spines and dendrites for this image: {round(neuron.size * 2.5e-8, 2)} minutes.\n"
+            )
             if neuron.shape[0] < 5:
                 # settings.shape_error = True
                 # logger.info(f"  !! Insufficient Z slices - please ensure 5 or more slices before processing.")
@@ -413,7 +518,12 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 # Padding and flag this file as padded for unpadding later
                 # Pad the array
                 settings.padding_req[file] = 1
-                neuron = np.pad(neuron, pad_width=((2, 2), (0, 0), (0, 0)), mode='constant', constant_values=0)
+                neuron = np.pad(
+                    neuron,
+                    pad_width=((2, 2), (0, 0), (0, 0)),
+                    mode="constant",
+                    constant_values=0,
+                )
                 logger.info(f"   Too few Z-slices, padding to allow analysis.")
 
             if settings.HistMatch == True:
@@ -436,7 +546,7 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
 
             filepath = locations.nnUnet_input + new_filename
 
-            byte_limit = int(3.5 * 1024 ** 3)  # 3.5 GB threshold
+            byte_limit = int(3.5 * 1024**3)  # 3.5 GB threshold
             need_bigtiff = neuron.nbytes > byte_limit  # uint16 → 2 bytes/voxel
 
             with warnings.catch_warnings():
@@ -444,11 +554,14 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 imwrite(
                     filepath,
                     neuron.astype(np.uint16),
-                    compression=('zlib', 1),
-                    photometric='minisblack',
-                    metadata={'spacing': settings.input_resZ,
-                              'unit': 'um',
-                              'axes': 'ZYX'},
+                    compression="zlib",
+                    compressionargs=1,
+                    photometric="minisblack",
+                    metadata={
+                        "spacing": settings.input_resZ,
+                        "unit": "um",
+                        "axes": "ZYX",
+                    },
                     resolution=(settings.input_resXY, settings.input_resXY),
                     imagej=not need_bigtiff,
                     bigtiff=need_bigtiff,
@@ -461,36 +574,58 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
             logger.info("  Creating nnUNet input tiles …")
             patch_images_for_nnunet(locations.nnUnet_input, settings, logger)
 
-
-        # split the path into subdirectories
-        subdirectories = os.path.normpath(settings.neuron_seg_model_path).split(os.sep)
-        last_subdirectory = subdirectories[-1]
-        # find all three digit sequences in the last subdirectory
-        matches = re.findall(r'\d{3}', last_subdirectory)
-        # If there's a match, assign it to a variable
+        # Derive dataset id from the model path. Prefer 3-digit codes anywhere in the model path,
+        # but preserve existing behavior of finding digits in subdirectory names.
+        model_path_norm = os.path.normpath(settings.neuron_seg_model_path)
+        # look for any 3-digit sequence anywhere in the model path
+        matches = re.findall(r"\d{3}", model_path_norm)
         dataset_id = matches[0] if matches else None
+        if dataset_id is None:
+            # Fallback: try to find a 'Dataset' prefix like 'Dataset224' in the path
+            m = re.search(r"Dataset(\d{3})", model_path_norm, flags=re.IGNORECASE)
+            if m:
+                dataset_id = m.group(1)
+
+        # If still None, log and abort with a clear message
+        if dataset_id is None:
+            logger.error(
+                "Could not determine dataset ID from model path. Please ensure the model path contains a three-digit dataset ID (e.g., 'Dataset224') or set the model directory to the trained model's dataset folder."
+            )
+            return 1
+
+        # If we have a match, use it
+        # dataset_id is a string containing digits
 
         logger.info("  Performing spine and dendrite detection on GPU...")
 
         ##uncomment if issues with nnUnet
         # logger.info(f"{settings.nnUnet_conda_path} , {settings.nnUnet_env} , {locations.nnUnet_input}, {locations.labels} , {dataset_id} , {settings.nnUnet_type} , {settings}")
 
-        return_code = run_nnunet_predict(settings.nnunet_predict_bat,
-                                         locations.nnUnet_input, locations.labels, dataset_id, settings.nnUnet_type,
-                                         settings, logger)
+        return_code = run_nnunet_predict(
+            settings.nnunet_predict_bat,
+            locations.nnUnet_input,
+            locations.labels,
+            dataset_id,
+            settings.nnUnet_type,
+            settings,
+            logger,
+        )
 
         if settings.patch_for_nnunet:
             logger.info("  Re-assembling nnUNet tile outputs …")
-            reassemble_patch_predictions(locations.labels,
-                                         locations.nnUnet_input,
-                                         locations.labels,
-                                         settings, logger)
+            reassemble_patch_predictions(
+                locations.labels,
+                locations.nnUnet_input,
+                locations.labels,
+                settings,
+                logger,
+            )
         # logger.info(cmd)
 
         ##uncomment if issues with nnUnet
         # result = run_nnunet_predict(settings.nnUnet_conda_path, settings.nnUnet_env, locations.nnUnet_input, locations.labels, dataset_id, settings.nnUnet_type, locations,settings)
 
-        '''
+        """
         # Add environment to the system path
         #os.environ["PATH"] = settings.nnUnet_env_path + os.pathsep + os.environ["PATH"]
 
@@ -504,8 +639,8 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
         #result = subprocess.run(command, capture_output=True, text=True)
 
         #logger.info(result.stdout)  # This is the standard output of the command.
-        #logger.info(result.stderr)  # This is the error output of the command. 
-        '''
+        #logger.info(result.stderr)  # This is the error output of the command.
+        """
         # logger.info(stdout)
 
         # delete nnunet input folder and files
@@ -519,7 +654,7 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
             # iterate over all files in the directory
             for filename in os.listdir(locations.labels):
                 # check if the file is not a .tif file
-                if not filename.endswith('.tif'):
+                if not filename.endswith(".tif"):
                     # construct full file path
                     file_path = os.path.join(locations.labels, filename)
                     # remove the file
@@ -528,29 +663,43 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
 
         # if tracking over time then we want unpad and match how the labels will appear
 
-        files = [file_i
-                 for file_i in os.listdir(locations.labels)
-                 if file_i.endswith('.tif')]
+        files = [
+            file_i for file_i in os.listdir(locations.labels) if file_i.endswith(".tif")
+        ]
         files = sorted(files)
 
         for file in range(len(files)):
             # if file == 0: logger.info(' Unpadding and rescaling neuron channel for registration and time tracking...')
 
             # Unpad if padded # later update - these can be included in Unet processing stage to simplify!
-            if settings.padding_req[
-                file] == 1:  # and settings.prev_labels == False and settings.original_shape[0] != None:
+            if (
+                settings.padding_req[file] == 1
+            ):  # and settings.prev_labels == False and settings.original_shape[0] != None:
                 logger.info(f"  Unpadding image {files[file]}")
                 image = imread(locations.labels + files[file])
                 image = image[2:-2, :, :]
 
                 logger.info(f"  Image {files[file]} has shape: {image.shape}")
 
-                imwrite(locations.labels + files[file], image.astype(np.uint8), compression=('zlib', 1), imagej=True,
-                        photometric='minisblack',
-                        metadata={'spacing': settings.input_resZ, 'unit': 'um', 'axes': 'ZYX', 'mode': 'composite'},
-                        resolution=(settings.input_resXY, settings.input_resXY))
+                imwrite(
+                    locations.labels + files[file],
+                    image.astype(np.uint8),
+                    compression="zlib",
+                    compressionargs=1,
+                    imagej=True,
+                    photometric="minisblack",
+                    metadata={
+                        "spacing": settings.input_resZ,
+                        "unit": "um",
+                        "axes": "ZYX",
+                        "mode": "composite",
+                    },
+                    resolution=(settings.input_resXY, settings.input_resXY),
+                )
 
-                logger.info(f"  Image {files[file]} has been unpaded and saved to {locations.labels}")
+                logger.info(
+                    f"  Image {files[file]} has been unpaded and saved to {locations.labels}"
+                )
 
                 # Unpad if padded
                 # if settings.padding_req[file] == 1:
@@ -569,52 +718,221 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 #          resolution=(settings.input_resXY, settings.input_resXY))
         total_time = (time.time() - time_initial) / 60
         logger.info(
-            f"\n  Total time for spine and dendrite label creation: {round(total_time, 2)} minutes.")
+            f"\n  Total time for spine and dendrite label creation: {round(total_time, 2)} minutes."
+        )
     # logger.info("Segmentation complete.\n")
     logger.info(
-        "\n-----------------------------------------------------------------------------------------------------")
+        "\n-----------------------------------------------------------------------------------------------------"
+    )
     return return_code
 
 
-def run_nnunet_predict(nnunet_predict_bat, input_dir, output_dir, dataset_id, nnunet_type, settings, logger):
+def run_nnunet_predict(
+    nnunet_predict_bat, input_dir, output_dir, dataset_id, nnunet_type, settings, logger
+):
     # Set environment variables
 
     initialize_nnUnet(settings, logger)
 
-    #activate_env = fr"{conda_dir}\Scripts\activate.bat {nnUnet_env}&& set PATH={settings.nnUnet_env_path}/{nnUnet_env}/Scripts;%PATH%"
+    # activate_env = fr"{conda_dir}\Scripts\activate.bat {nnUnet_env}&& set PATH={settings.nnUnet_env_path}/{nnUnet_env}/Scripts;%PATH%"
 
     # Define the command to be run
     # cmd = "nnUNetv2_predictRESPAN -i \"{}\" -o \"{}\" -d {} -c {} -f all".format(input_dir, output_dir, dataset_id, nnunet_type)
-    #cmd = "nnUNetv2_predict -i \"{}\" -o \"{}\" -d {} -c {} -f all".format(input_dir, output_dir, dataset_id,nnunet_type)
-    cmd_list = [
-        str(settings.internal_py_path),
-        str(settings.clean_launcher),
-        str(nnunet_predict_bat),  # Target script
-        "-i", input_dir,
-        "-o", output_dir,
-        "-d", dataset_id,
-        "-c", nnunet_type,
-        "-f", "all"
-    ]
+    # Try the documented embedded script first. If missing, fall back to PATH or `python -m` invocation.
+
+    # Helper variables
+    predict_path = Path(nnunet_predict_bat)
+
+    if predict_path.exists():
+        logger.info(f"Using nnUNet script found in env: {predict_path}")
+        cmd_list = [
+            str(settings.internal_py_path),
+            str(settings.clean_launcher),
+            str(predict_path),  # Target script
+            "-i",
+            input_dir,
+            "-o",
+            output_dir,
+            "-d",
+            dataset_id,
+            "-c",
+            nnunet_type,
+            "-f",
+            "all",
+        ]
+    else:
+        # Try to find an executable on PATH
+        path_candidate = shutil.which("nnUNetv2_predict") or shutil.which(
+            "nnunetv2_predict"
+        )
+        if path_candidate:
+            logger.info(
+                f"nnUNet script not found in env; using PATH executable: {path_candidate}"
+            )
+            cmd_list = [
+                path_candidate,
+                "-i",
+                input_dir,
+                "-o",
+                output_dir,
+                "-d",
+                dataset_id,
+                "-c",
+                nnunet_type,
+                "-f",
+                "all",
+            ]
+
+            # Check acvl_utils compatibility: some versions are missing crop_to_bbox
+            try:
+                import importlib.util
+
+                spec = importlib.util.find_spec(
+                    "acvl_utils.cropping_and_padding.bounding_boxes"
+                )
+                if spec and getattr(spec, "origin", None):
+                    # load the installed module to inspect
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    if not hasattr(mod, "crop_to_bbox"):
+                        # create a small shim that loads the original module and defines crop_to_bbox
+                        import tempfile
+
+                        tmpdir = tempfile.mkdtemp(prefix="respan_acvl_shim_")
+                        shim_dir = os.path.join(
+                            tmpdir, "acvl_utils", "cropping_and_padding"
+                        )
+                        os.makedirs(shim_dir, exist_ok=True)
+                        shim_path = os.path.join(shim_dir, "bounding_boxes.py")
+                        orig_path = spec.origin.replace("\\", "/")
+                        shim_code = f"""# Compatibility shim for acvl_utils.bounding_boxes\nimport importlib.util, types\n# Load original implementation from: {orig_path}\nspec = importlib.util.spec_from_file_location('acvl_utils._orig_bounding_boxes', r'{orig_path}')\norig = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(orig)\n# Export original attributes\nfor name in dir(orig):\n    if not name.startswith('__'):\n        globals()[name] = getattr(orig, name)\n# Provide crop_to_bbox if missing\nif not hasattr(orig, 'crop_to_bbox'):\n    def crop_to_bbox(img, bbox):\n        try:\n            sl = bounding_box_to_slice(bbox)\n            return img[sl]\n        except Exception:\n            # bbox assumed to be (z0,z1,y0,y1,x0,x1) or (y0,y1,x0,x1)\n            try:\n                z0,z1,y0,y1,x0,x1 = bbox\n                return img[z0:z1, y0:y1, x0:x1]\n            except Exception:\n                # best-effort fallback: use numpy slicing on last 3 dims\n                return img[..., bbox[0]:bbox[1], bbox[2]:bbox[3], bbox[4]:bbox[5]]\n    globals()['crop_to_bbox'] = crop_to_bbox\n"""
+                        with open(shim_path, "w") as f:
+                            f.write(shim_code)
+                        # Also need __init__.py files to make it a package
+                        open(
+                            os.path.join(tmpdir, "acvl_utils", "__init__.py"), "a"
+                        ).close()
+                        os.makedirs(
+                            os.path.join(tmpdir, "acvl_utils", "cropping_and_padding"),
+                            exist_ok=True,
+                        )
+                        open(
+                            os.path.join(
+                                tmpdir,
+                                "acvl_utils",
+                                "cropping_and_padding",
+                                "__init__.py",
+                            ),
+                            "a",
+                        ).close()
+                        # Remember shim path for subprocess environment prepending later
+                        compat_shim_tmpdir = tmpdir
+                        logger.info(
+                            f"Created acvl_utils compatibility shim (will prepend to PYTHONPATH for nnUNet subprocess): {tmpdir}"
+                        )
+            except Exception as e:
+                logger.info(f"acvl_utils compatibility check failed: {e}")
+        else:
+            # Fall back to module-based invocation: python -m nnunetv2_predict
+            module_name = "nnunetv2_predict"
+            python_exec = (
+                str(settings.internal_py_path)
+                if getattr(settings, "internal_py_path", None)
+                else shutil.which("python3") or shutil.which("python")
+            )
+            logger.info(
+                f"nnUNet script not found in env or PATH; falling back to 'python -m {module_name}' using {python_exec}"
+            )
+            cmd_list = [
+                python_exec,
+                "-m",
+                module_name,
+                "-i",
+                input_dir,
+                "-o",
+                output_dir,
+                "-d",
+                dataset_id,
+                "-c",
+                nnunet_type,
+                "-f",
+                "all",
+            ]
 
     # Convert to string for shell=True
-    cmd = ' '.join(f'"{arg}"' for arg in cmd_list)
+    cmd = " ".join(f'"{arg}"' for arg in cmd_list)
 
     # Create clean environment
     env = os.environ.copy()
-    env['PYTHONNOUSERSITE'] = '1'
-    env['PYTHONPATH'] = ''
+    env["PYTHONNOUSERSITE"] = "1"
+    env["PYTHONPATH"] = ""
+    # If we created an acvl_utils compatibility shim earlier, prepend it to PYTHONPATH for subprocess
+    if "compat_shim_tmpdir" in locals():
+        env["PYTHONPATH"] = compat_shim_tmpdir + os.pathsep + env.get("PYTHONPATH", "")
+        logger.info(
+            f"Prepended acvl_utils compatibility shim to PYTHONPATH for subprocess: {compat_shim_tmpdir}"
+        )
 
     # Preserve critical nnUNet environment variables
-    #logger.info("=== DEBUG: Preserving nnUNet variables ===")
-    # Preserve critical nnUNet environment variables
-    nnunet_vars = ['nnUNet_raw', 'nnUNet_preprocessed', 'nnUNet_results']
+    nnunet_vars = ["nnUNet_raw", "nnUNet_preprocessed", "nnUNet_results"]
     for var in nnunet_vars:
         if var in os.environ:
             env[var] = os.environ[var]
             logger.info(f"     Preserving {var} = {os.environ[var]}")
 
-    print(f"Executing command: {cmd}")
+    # Before executing, perform a quick dependency check in the target python environment
+    python_exec = (
+        str(settings.internal_py_path)
+        if getattr(settings, "internal_py_path", None)
+        else (shutil.which("python3") or shutil.which("python"))
+    )
+
+    dep_check_script = (
+        "import sys, traceback\n"
+        "missing=[]\n"
+        "try:\n  import blosc2\nexcept Exception as e:\n  missing.append('blosc2')\n"
+        "try:\n  import importlib; bb = importlib.import_module('acvl_utils.cropping_and_padding.bounding_boxes')\n  if not hasattr(bb,'crop_to_bbox'):\n    missing.append('acvl_utils (missing crop_to_bbox)')\nexcept Exception as e:\n  missing.append('acvl_utils')\n"
+        "print('MISSING:' + ','.join(missing))\n"
+    )
+
+    try:
+        result = subprocess.run(
+            [python_exec, "-c", dep_check_script], capture_output=True, text=True
+        )
+        stdout = result.stdout.strip()
+        stderr = result.stderr.strip()
+        missing = []
+        if result.returncode != 0:
+            # If the check script had an error, attempt to parse MISSING from stdout anyway
+            if stdout.startswith("MISSING:"):
+                missing = (
+                    stdout.replace("MISSING:", "").split(",")
+                    if stdout.replace("MISSING:", "")
+                    else []
+                )
+            else:
+                logger.info(f"Dependency check failed to run: {stderr}")
+        else:
+            if stdout.startswith("MISSING:"):
+                missing = (
+                    stdout.replace("MISSING:", "").split(",")
+                    if stdout.replace("MISSING:", "")
+                    else []
+                )
+
+        if missing:
+            logger.error(
+                "nnUNet dependency check failed. Missing packages: %s"
+                % (",".join(missing))
+            )
+            logger.info(
+                "Please install missing packages in the environment used to run nnUNet. E.g.:\n  pixi run mamba install -n default -c conda-forge blosc2 acvl-utils -y\nOr: pixi run pip install blosc2 acvl-utils"
+            )
+            return 1
+    except Exception as e:
+        logger.error(f"Failed to run dependency check: {e}")
+
+    logger.info(f"Executing command: {cmd}")
 
     return_code, stdout_out, stderr_out = run_process_with_logging(cmd, logger, env=env)
 
@@ -636,20 +954,26 @@ def run_process_with_logging(cmd, logger, env=None):
         env = os.environ.copy()
 
     # Keep your existing process creation but add env parameter
-    process = subprocess.Popen(cmd,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE,
-                               shell=True,
-                               bufsize=1,
-                               universal_newlines=True,
-                               env=env)  # Add environment parameter
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True,
+        bufsize=1,
+        universal_newlines=True,
+        env=env,
+    )  # Add environment parameter
 
     stdout_buffer = []
     stderr_buffer = []
 
     # Start threads to read stdout and stderr (keeping your existing approach)
-    stdout_thread = threading.Thread(target=log_output, args=(process.stdout, logger, stdout_buffer))
-    stderr_thread = threading.Thread(target=log_output, args=(process.stderr, logger, stderr_buffer))
+    stdout_thread = threading.Thread(
+        target=log_output, args=(process.stdout, logger, stdout_buffer)
+    )
+    stderr_thread = threading.Thread(
+        target=log_output, args=(process.stderr, logger, stderr_buffer)
+    )
     stdout_thread.start()
     stderr_thread.start()
 
@@ -659,10 +983,14 @@ def run_process_with_logging(cmd, logger, env=None):
     stderr_thread.join()
 
     # Wait for the output threads to finish
-    stdout_output = ''.join(stdout_buffer)
-    stderr_output = ''.join(stderr_buffer)
+    stdout_output = "".join(stdout_buffer)
+    stderr_output = "".join(stderr_buffer)
 
-    return process.returncode, stdout_output, stderr_output #process.stderr.read().decode().strip()
+    return (
+        process.returncode,
+        stdout_output,
+        stderr_output,
+    )  # process.stderr.read().decode().strip()
 
 
 def _mapping_path(nn_input_dir):
@@ -691,22 +1019,28 @@ def patch_images_for_nnunet(nn_input_dir, settings, logger):
         nZ, nY, nX = patches.shape[:3]
         base, idx = fn[:-4], 0
 
-        logger.info(f"    Patching {fn}  →  {nZ * nY * nX} blocks  (patch {psize}, stride {stride})")
+        logger.info(
+            f"    Patching {fn}  →  {nZ * nY * nX} blocks  (patch {psize}, stride {stride})"
+        )
         for z in range(nZ):
             for y in range(nY):
                 for x in range(nX):
-                    imwrite(os.path.join(
-                        nn_input_dir,
-                        f"{base}_patch{idx:04d}_0000.tif"),
-                        patches[z, y, x].astype(np.uint16))
+                    imwrite(
+                        os.path.join(nn_input_dir, f"{base}_patch{idx:04d}_0000.tif"),
+                        patches[z, y, x].astype(np.uint16),
+                    )
                     idx += 1
 
         mapping.append(
-            {"base": base,
-             "shape": img.shape,
-             "nZ": nZ, "nY": nY, "nX": nX,
-             "patch_size": psize,
-             "stride": stride}
+            {
+                "base": base,
+                "shape": img.shape,
+                "nZ": nZ,
+                "nY": nY,
+                "nX": nX,
+                "patch_size": psize,
+                "stride": stride,
+            }
         )
         os.remove(img_path)  # avoid double processing
 
@@ -714,8 +1048,10 @@ def patch_images_for_nnunet(nn_input_dir, settings, logger):
         json.dump(mapping, f, indent=2)
     return mapping
 
-def reassemble_patch_predictions(nn_output_dir, nn_input_dir,
-                                 final_dir, settings, logger):
+
+def reassemble_patch_predictions(
+    nn_output_dir, nn_input_dir, final_dir, settings, logger
+):
     """
     Stitch nnUNet tile predictions by majority vote.
     Class count determined on-the-fly.
@@ -745,16 +1081,21 @@ def reassemble_patch_predictions(nn_output_dir, nn_input_dir,
                     have.append(p_alt)
 
         if len(have) == 0:
-            logger.error(f"    No prediction tiles found for base={base}. "
-                         f"Did earlier cleanup remove them? Skipping.")
+            logger.error(
+                f"    No prediction tiles found for base={base}. "
+                f"Did earlier cleanup remove them? Skipping."
+            )
             # write explicit zeros to make the failure obvious downstream
-            imwrite(os.path.join(final_dir, f"{base_out}.tif"),
-                    np.zeros(shape, dtype=np.uint16), compression="zlib")
+            imwrite(
+                os.path.join(final_dir, f"{base_out}.tif"),
+                np.zeros(shape, dtype=np.uint16),
+                compression="zlib",
+            )
             continue
 
         # pass 1 ─ determine class count
         max_lab = 0
-        for p in have[:min(8, len(have))]:
+        for p in have[: min(8, len(have))]:
             m = imread(p).max()
             if m > max_lab:
                 max_lab = int(m)
@@ -772,15 +1113,17 @@ def reassemble_patch_predictions(nn_output_dir, nn_input_dir,
                     x0 = x * stride[2]
                     p = os.path.join(nn_output_dir, f"{base}_patch{idx:04d}.tif")
                     if not os.path.exists(p):
-                        p = os.path.join(nn_output_dir, f"{base}_patch{idx:04d}_0000.tif")
+                        p = os.path.join(
+                            nn_output_dir, f"{base}_patch{idx:04d}_0000.tif"
+                        )
                     if os.path.exists(p):
                         patch = imread(p)
                         z1 = min(z0 + psize[0], shape[0])
                         y1 = min(y0 + psize[1], shape[1])
                         x1 = min(x0 + psize[2], shape[2])
-                        sub = patch[:z1 - z0, :y1 - y0, :x1 - x0]
+                        sub = patch[: z1 - z0, : y1 - y0, : x1 - x0]
                         for c in range(n_classes):
-                            m = (sub == c)
+                            m = sub == c
                             if m.any():
                                 counts[c, z0:z1, y0:y1, x0:x1] += m
                     idx += 1
@@ -788,7 +1131,9 @@ def reassemble_patch_predictions(nn_output_dir, nn_input_dir,
         seg = np.argmax(counts, axis=0).astype(np.uint16)
         out_path = os.path.join(final_dir, f"{base_out}.tif")
         imwrite(out_path, seg, compression="zlib")
-        logger.info(f"    Re-assembled: {base_out}.tif  [tiles: {len(have)}/{total_expected}, classes: {n_classes}]")
+        logger.info(
+            f"    Re-assembled: {base_out}.tif  [tiles: {len(have)}/{total_expected}, classes: {n_classes}]"
+        )
 
         # cleanup only this base's tiles
         for idx in range(total_expected):
@@ -799,4 +1144,3 @@ def reassemble_patch_predictions(nn_output_dir, nn_input_dir,
                         os.remove(p)
                     except Exception:
                         pass
-

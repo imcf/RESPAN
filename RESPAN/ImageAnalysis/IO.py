@@ -1,9 +1,6 @@
-
-
-
 import numpy as np
-from tifffile import imwrite
 
+from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 
 def create_and_save_multichannel_tiff(images_3d, filename, bitdepth, settings):
@@ -25,9 +22,15 @@ def create_and_save_multichannel_tiff(images_3d, filename, bitdepth, settings):
     # Convert the multichannel image to 16-bit
     multichannel_image = multichannel_image.astype(np.uint16)
 
-
-    imwrite(filename, multichannel_image, compression=('zlib', 1), imagej=True, photometric='minisblack',
-            metadata={'spacing': settings.input_resZ, 'unit': 'um','axes': 'ZCYX'})
+    imwrite(
+        filename,
+        multichannel_image,
+        compression="zlib",
+        compressionargs=1,
+        imagej=True,
+        photometric="minisblack",
+        metadata={"spacing": settings.input_resZ, "unit": "um", "axes": "ZCYX"},
+    )
 
 
 def create_mip_and_save_multichannel_tiff(images_3d, filename, bitdepth, settings):
@@ -50,13 +53,20 @@ def create_mip_and_save_multichannel_tiff(images_3d, filename, bitdepth, setting
 
     # Convert the multichannel image to 16-bit
     multichannel_image = multichannel_image.astype(np.uint16)
-    #multichannel_image = rescale_all_channels_to_full_range(multichannel_image)
+    # multichannel_image = rescale_all_channels_to_full_range(multichannel_image)
 
     # Save the multichannel image as a 16-bit TIFF file
-    #imwrite(filename, multichannel_image, photometric='minisblack')
+    # imwrite(filename, multichannel_image, photometric='minisblack')
 
-    imwrite(filename, multichannel_image, compression=('zlib', 1), imagej=True, photometric='minisblack',
-            metadata={'spacing': settings.input_resZ, 'unit': 'um','axes': 'CYX'})
+    imwrite(
+        filename,
+        multichannel_image,
+        compression="zlib",
+        compressionargs=1,
+        imagej=True,
+        photometric="minisblack",
+        metadata={"spacing": settings.input_resZ, "unit": "um", "axes": "CYX"},
+    )
 
     # Return the merged 2D multi-channel image as a numpy array
     return multichannel_image
@@ -83,13 +93,20 @@ def create_mip_and_save_multichannel_tiff_4d(images_3d, filename, bitdepth, sett
 
     # Convert the multichannel image to 16-bit
     multichannel_image = multichannel_image.astype(np.uint16)
-    #multichannel_image = rescale_all_channels_to_full_range(multichannel_image)
+    # multichannel_image = rescale_all_channels_to_full_range(multichannel_image)
 
     # Save the multichannel image as a 16-bit TIFF file
-    #imwrite(filename, multichannel_image, photometric='minisblack')
+    # imwrite(filename, multichannel_image, photometric='minisblack')
 
-    imwrite(filename, multichannel_image, compression=('zlib', 1), imagej=True, photometric='minisblack',
-            metadata={'spacing': settings.input_resZ, 'unit': 'um','axes': 'TCYX'})
+    imwrite(
+        filename,
+        multichannel_image,
+        compression="zlib",
+        compressionargs=1,
+        imagej=True,
+        photometric="minisblack",
+        metadata={"spacing": settings.input_resZ, "unit": "um", "axes": "TCYX"},
+    )
 
     # Return the merged 2D multi-channel image as a numpy array
     return multichannel_image
