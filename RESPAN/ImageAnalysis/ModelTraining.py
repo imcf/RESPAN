@@ -50,7 +50,7 @@ from skimage.exposure import rescale_intensity
 from skimage.filters import gaussian
 from tensorflow.keras.callbacks import Callback
 
-import RESPAN.ImageAnalysis.IO as io
+import RESPAN.ImageAnalysis.IO as respan_io
 from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
@@ -218,7 +218,9 @@ def augment_images_v1(input_dir, output_dir, logger, is_low_snr=False, choices=N
     # Process all images with rotation and optional noise/blur
     degrees_list = [90, 180, 270]
     image_paths = [
-        os.path.join(input_dir, f) for f in os.listdir(input_dir) if io.is_image_file(f)
+        os.path.join(input_dir, f)
+        for f in os.listdir(input_dir)
+        if respan_io.is_image_file(f)
     ]
     for degrees in degrees_list:
         for image_path in image_paths:
@@ -235,7 +237,7 @@ def augment_images_v1(input_dir, output_dir, logger, is_low_snr=False, choices=N
 
 def _aug_complete(src_dir, tgt_dir, n_src, n_rot):
     expected = n_src * n_rot
-    tif = lambda d: {f for f in os.listdir(d) if io.is_image_file(f)}
+    tif = lambda d: {f for f in os.listdir(d) if respan_io.is_image_file(f)}
     if not (os.path.isdir(src_dir) and os.path.isdir(tgt_dir)):
         return False
     src_files, tgt_files = tif(src_dir), tif(tgt_dir)
@@ -658,12 +660,21 @@ def train_nnUNet(
     logger.info(
         "\nRunning nnUNetv2_train 3d_fullres all. Please allow 12-24 hours depending on GPU resources..."
     )
+    training_log_path = os.path.join(
+        results,
+        f"Dataset{datasetID}",
+        "nnUNetTrainer__nnUNetPlans__3d_fullres",
+        "fold_all",
+        f"training_log_{date}.txt",
+    )
     logger.info(
-        f"Training log may not update until training is complete. If you wish to confirm progress "
-        f"you may open the log file located in:\n"
-        f"{results}\\Dataset{datasetID}\\nnUNetTrainer__nnUNetPlans__3d_fullres\\fold_all\\training_log_{date}.txt\n"
-        f"This file will update as training progresses, but the file will not refresh (you will have to close then reopen to recheck status).\n"
-        f"You may estimate the time remaining by multiplying the epoch time by 1000."
+        (
+            "Training log may not update until training is complete. If you wish to confirm progress "
+            "you may open the log file located in:\n"
+            f"{training_log_path}\n"
+            "This file will update as training progresses, but the file will not refresh (you will have to close then reopen to recheck status).\n"
+            "You may estimate the time remaining by multiplying the epoch time by 1000."
+        )
     )
 
     return_code_train = run_process_with_logging(cmd_train, logger, env=env)
