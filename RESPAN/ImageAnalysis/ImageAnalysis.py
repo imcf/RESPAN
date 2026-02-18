@@ -60,7 +60,7 @@ from skimage.measure import marching_cubes
 from skimage.transform import resize
 
 import RESPAN.ImageAnalysis.DaskImageAnalysis as dia
-import RESPAN.ImageAnalysis.IO as io
+import RESPAN.ImageAnalysis.IO as respan_io
 import RESPAN.ImageAnalysis.MemProfiler as mp
 import RESPAN.ImageAnalysis.Segmentation_and_Restoration as sr
 import RESPAN.ImageAnalysis.Tables as tables
@@ -98,30 +98,84 @@ def analyze_spines(settings, locations, log, logger):
     # soma = 3
 
     files = [
-        file_i for file_i in os.listdir(locations.input_dir) if io.is_image_file(file_i)
+        file_i
+        for file_i in os.listdir(locations.input_dir)
+        if respan_io.is_image_file(file_i)
     ]
     files = sorted(files)
 
     label_files = [
-        file_i for file_i in os.listdir(locations.labels) if io.is_image_file(file_i)
+        file_i
+        for file_i in os.listdir(locations.labels)
+        if respan_io.is_image_file(file_i)
     ]
 
     label_files = sorted(label_files)
 
-    if len(files) != len(label_files):
-        # logger.info(log)
+    # Build robust pairing between raw image files and label files based on filename stems.
+    def _match_label(raw_name, label_list):
+        raw_stem = Path(raw_name).stem.lower()
+        # exact stem match (case-insensitive)
+        for lbl in label_list:
+            if Path(lbl).stem.lower() == raw_stem:
+                return lbl
+        # prefix matches (label startswith raw or raw startswith label)
+        for lbl in label_list:
+            lbl_stem = Path(lbl).stem.lower()
+            if lbl_stem.startswith(raw_stem) or raw_stem.startswith(lbl_stem):
+                return lbl
+        # containment
+        for lbl in label_list:
+            lbl_stem = Path(lbl).stem.lower()
+            if raw_stem in lbl_stem or lbl_stem in raw_stem:
+                return lbl
+        # best common prefix fallback
+        best = None
+        best_score = 0
+        for lbl in label_list:
+            a = raw_stem
+            b = Path(lbl).stem.lower()
+            common = 0
+            for x, y in zip(a, b):
+                if x == y:
+                    common += 1
+                else:
+                    break
+            if common > best_score:
+                best_score = common
+                best = lbl
+        if best_score > 0:
+            return best
+        return None
+
+    pairs = []  # list of (raw_filename, label_filename)
+    missing_raw = []
+    for raw in files:
+        match = _match_label(raw, label_files)
+        if match is None:
+            missing_raw.append(raw)
+        else:
+            pairs.append((raw, match))
+
+    if len(missing_raw) > 0:
+        logger.warning(
+            f"Found {len(missing_raw)} raw files without matching label files; they will be skipped: {missing_raw}"
+        )
+
+    if len(pairs) == 0:
         raise RuntimeError(
-            "Number of raw and label images are not the same - check data."
+            "No matching raw/label image pairs found in input directories."
         )
 
     spine_summary = pd.DataFrame()
 
-    for file in range(len(files)):
+    for i, (raw_file, label_file) in enumerate(pairs):
         logger.info(
-            f" Analyzing image {file + 1} of {len(files)} \n  Raw Image: {files[file]} & Label Image: {label_files[file]}"
+            f" Analyzing image {i + 1} of {len(pairs)} \n  Raw Image: {raw_file} & Label Image: {label_file}"
         )
 
-        settings.filename = files[file].replace(".tif", "")
+        # Use filename stem (without extension) for settings and processing
+        settings.filename = Path(raw_file).stem
 
         if settings.dask_enabled == True:
             if settings.resave_omezarr:
@@ -131,7 +185,7 @@ def analyze_spines(settings, locations, log, logger):
             logger.info(f"  Resaving raw image data...")
 
             image, raw_zarr_root = dia.open_tiff_as_dask(
-                locations.input_dir + files[file],
+                os.path.join(locations.input_dir, raw_file),
                 client=client,
                 chunks=settings.dask_block,
                 pixel_sizes=(
@@ -145,9 +199,9 @@ def analyze_spines(settings, locations, log, logger):
                 logger=logger,
             )
             logger.info(f"  Resaving labels data...")
-            # image = dia.open_tiff_as_dask(locations.input_dir + files[file])
+            # image = dia.open_tiff_as_dask(os.path.join(locations.input_dir, raw_file))
             labels, _ = dia.open_tiff_as_dask(
-                locations.labels + files[file],
+                os.path.join(locations.labels, label_file),
                 client=client,
                 chunks=image.chunks,  # match raw grid *now*
                 pixel_sizes=None,  # voxels only
@@ -155,7 +209,7 @@ def analyze_spines(settings, locations, log, logger):
                 settings=settings,
                 logger=logger,
             )
-            # labels = dia.open_tiff_as_dask(locations.labels + files[file]).rechunk(image.chunks)
+            # labels = dia.open_tiff_as_dask(locations.labels + raw_file).rechunk(image.chunks)
             if len(labels.shape) == 4:  # Check if it has a channel dimension (CZYX)
                 labels = labels[0, :, :, :]  # remove channel dimension
                 logger.info(
@@ -165,11 +219,10 @@ def analyze_spines(settings, locations, log, logger):
             labels = labels.persist()
 
         else:
-            image = imread(locations.input_dir + files[file])
+            image = imread(os.path.join(locations.input_dir, raw_file))
             labels = imread(
-                locations.labels + files[file]
-            )  # use original file name to ensure correct image regardless of sorting
-
+                os.path.join(locations.labels, label_file)
+            )  # use matching label filename
         logger.info(f"  Raw shape: {image.shape} & Labels shape: {labels.shape}")
         # print image size in GB, with comma between thousands
         image_GB = image.nbytes / 1e9
@@ -263,9 +316,11 @@ def analyze_spines(settings, locations, log, logger):
         if settings.Vaa3d and image_GB < 2 and os.path.exists(settings.Vaa3Dpath):
             logger.info(f"  Creating SWC file using Vaa3D...")
             create_dir(locations.swcs)
-            if os.path.exists(locations.swcs + files[file] + ".swc"):
+            swc_input_path = os.path.join(locations.swcs, settings.filename + ".tif")
+            swc_output_path = os.path.join(locations.swcs, settings.filename + ".swc")
+            if os.path.exists(swc_output_path):
                 logger.info(
-                    f"   {files[file]}.swc already exists, delete this file to regenerate."
+                    f"   {settings.filename}.swc already exists, delete this file to regenerate."
                 )
             else:
                 # can no longer use                 vaa3D_neuron = (labels >= 2)*255 as necks are labeled with 4 and spines with 1
@@ -275,7 +330,7 @@ def analyze_spines(settings, locations, log, logger):
                 masked_neuron = neuron * vaa3D_mask
 
                 imwrite(
-                    locations.swcs + files[file],
+                    swc_input_path,
                     masked_neuron.astype(np.uint8),
                     compression="zlib",
                     compressionargs=1,
@@ -290,8 +345,8 @@ def analyze_spines(settings, locations, log, logger):
                 # run Vaa3D on image:
                 cmd = '"{}" /x vn2 /f app2 /i "{}" /o "{}" /p NULL 0 1 1 1 1 0 5 1 0 0'.format(
                     settings.Vaa3Dpath,
-                    locations.swcs + files[file],
-                    locations.swcs + files[file] + ".swc ",
+                    swc_input_path,
+                    swc_output_path,
                 )
                 # logger.info(cmd)
                 # Run the command
@@ -299,7 +354,7 @@ def analyze_spines(settings, locations, log, logger):
                 stdout, stderr = process.communicate()
                 # logger.info(stdout + stderr)
 
-                os.remove(locations.swcs + files[file])
+                os.remove(swc_input_path)
                 # Clear variables to free up memory
                 del vaa3D_mask
                 del neuron
@@ -321,7 +376,7 @@ def analyze_spines(settings, locations, log, logger):
                 raw_zarr_root,
                 settings,
                 locations,
-                files[file].replace(".tif", ""),
+                settings.filename,
                 log,
                 logger,
             )
@@ -332,7 +387,7 @@ def analyze_spines(settings, locations, log, logger):
                 spine_summary,
                 settings,
                 locations,
-                files[file].replace(".tif", ""),
+                settings.filename,
                 log,
                 logger,
             )
@@ -382,28 +437,49 @@ def spine_and_whole_neuron_processing(
         # settings.neck_analysis = True
         settings.mesh_analysis = True
 
+    # Helper to ensure masks are 3D (Z, Y, X). Input label arrays may be CZYX, ZCYX, or already 3D.
+    def _to_3d(mask):
+        arr = np.asarray(mask)
+        if arr.ndim == 4:
+            # common formats: ZCYX (Z, C, Y, X) or CZYX (C, Z, Y, X)
+            if arr.shape[1] == 1:
+                arr = arr[:, 0, ...]
+            elif arr.shape[0] == 1:
+                arr = arr[0, ...]
+            else:
+                # try squeezing singleton axes, else try to collapse first axis if it's a channel dimension
+                arr = np.squeeze(arr)
+        if arr.ndim == 2:
+            # promote 2D (Y,X) to 3D with single Z
+            arr = arr[np.newaxis, ...]
+        if arr.ndim != 3:
+            raise RuntimeError(
+                f"Cannot coerce mask to 3D for morphological processing, got shape {arr.shape}"
+            )
+        return arr
+
     if settings.model_type == 1:
-        spines = labels_vol == 1
-        dendrites = labels_vol == 2
-        soma = labels_vol == 3
+        spines = _to_3d(labels_vol == 1)
+        dendrites = _to_3d(labels_vol == 2)
+        soma = _to_3d(labels_vol == 3)
     elif settings.model_type == 2:
-        dendrites = labels_vol == 1
-        soma = labels_vol == 2
-        spines = labels_vol == 10  # create an empty volume for spines
+        dendrites = _to_3d(labels_vol == 1)
+        soma = _to_3d(labels_vol == 2)
+        spines = _to_3d(labels_vol == 10)  # create an empty volume for spines
     elif settings.model_type == 3:
-        spines = labels_vol == 1
-        dendrites = labels_vol == 2
-        soma = labels_vol == 3
-        necks = labels_vol == 4
+        spines = _to_3d(labels_vol == 1)
+        dendrites = _to_3d(labels_vol == 2)
+        soma = _to_3d(labels_vol == 3)
+        necks = _to_3d(labels_vol == 4)
 
     elif settings.model_type == 4:
-        dendrites = labels_vol == 1
-        spine_cores = labels_vol == 2
-        spine_membranes = labels_vol == 3
-        necks = labels_vol == 4
-        soma = labels_vol == 5
-        axons = labels_vol == 6
-        spines = spine_cores + spine_membranes
+        dendrites = _to_3d(labels_vol == 1)
+        spine_cores = _to_3d(labels_vol == 2)
+        spine_membranes = _to_3d(labels_vol == 3)
+        necks = _to_3d(labels_vol == 4)
+        soma = _to_3d(labels_vol == 5)
+        axons = _to_3d(labels_vol == 6)
+        spines = (spine_cores + spine_membranes).astype(bool)
 
     del labels_vol
     gc.collect()
@@ -700,7 +776,7 @@ def spine_and_whole_neuron_processing(
         else:
             if settings.save_val_data == True:
                 logger.info("    Saving validation MIP image...")
-                io.create_mip_and_save_multichannel_tiff(
+                respan_io.create_mip_and_save_multichannel_tiff(
                     [
                         neuron,
                         spines,
@@ -718,7 +794,7 @@ def spine_and_whole_neuron_processing(
 
             if settings.save_intermediate_data == True:
                 logger.info("    Saving validation volume image...")
-                io.create_and_save_multichannel_tiff(
+                respan_io.create_and_save_multichannel_tiff(
                     [
                         neuron,
                         spines,
@@ -3299,7 +3375,7 @@ def import_tiff_files_to_cupy_list(folder_path):
     Returns:
     list: A list of CuPy arrays, each representing an image file.
     """
-    image_files = [f for f in os.listdir(folder_path) if io.is_image_file(f)]
+    image_files = [f for f in os.listdir(folder_path) if respan_io.is_image_file(f)]
     image_files.sort()  # Ensure consistent ordering
 
     imported_list = []
@@ -4380,39 +4456,68 @@ def adaptive_distance_transform(image, logger, threshold_size=20 * 2000 * 2000):
     size_ratio = current_size / threshold_size
     scale_factor = max(1, np.ceil(np.sqrt(size_ratio) * 2) / 2)
 
+    # Guard against non-finite scale factors
+    if not np.isfinite(scale_factor) or scale_factor < 1:
+        scale_factor = 1
+
     # If scale_factor is 1, perform regular distance transform
     if scale_factor == 1:
         return ndimage.distance_transform_edt(np.invert(binary_image))
 
-    scale_factor = scale_factor * 2
+    scale_factor = float(scale_factor) * 2
     logger.info(
         f"    Using scale factor {round(scale_factor, 1)} to reduce computation time for adaptive distance calculation."
     )
-    # Calculate new shape
-    new_shape = tuple(int(s / scale_factor) for s in binary_image.shape)
+    # Calculate new shape, ensure each dimension is at least 1
+    new_shape = tuple(max(1, int(round(s / scale_factor))) for s in binary_image.shape)
 
-    # Downsample the image
-    small_image = resize(
-        binary_image, new_shape, order=0, preserve_range=True, anti_aliasing=False
-    )
+    # Downsample the image (fallback to full-size if resize fails)
+    try:
+        small_image = resize(
+            binary_image, new_shape, order=0, preserve_range=True, anti_aliasing=False
+        )
+    except Exception as e:
+        logger.warning(
+            f"    Downsampling failed ({e}), falling back to full-size distance transform."
+        )
+        return ndimage.distance_transform_edt(np.invert(binary_image))
+
+    # If downsampling produced an empty axis, fallback
+    if any(s == 0 for s in small_image.shape):
+        logger.warning(
+            "    Downsampled image has zero-sized axis, falling back to full-size distance transform."
+        )
+        return ndimage.distance_transform_edt(np.invert(binary_image))
 
     # Calculate distance transform on small image
     # logger.info("    Calculating distance transform on downsampled image...")
     small_distance = ndimage.distance_transform_edt(np.invert(small_image))
 
+    if any(s == 0 for s in small_distance.shape):
+        logger.warning(
+            "    Distance transform on downsampled image produced empty axis, falling back to full-size distance transform."
+        )
+        return ndimage.distance_transform_edt(np.invert(binary_image))
+
     # Scale up the distance map
     # logger.info("    Resizing distance map to original size...")
-    large_distance = resize(
-        small_distance, binary_image.shape, order=1, preserve_range=True
-    )
+    try:
+        large_distance = resize(
+            small_distance, binary_image.shape, order=1, preserve_range=True
+        )
+    except Exception as e:
+        logger.warning(
+            f"    Upsampling failed ({e}), using safe ndimage.zoom fallback."
+        )
+        # Use safe zoom factors avoiding division by zero
+        zoom_factors = [
+            (t / s if s > 0 else 1)
+            for s, t in zip(small_distance.shape, binary_image.shape)
+        ]
+        large_distance = ndimage.zoom(
+            small_distance, zoom_factors, order=1, mode="nearest"
+        )
 
-    # save large distance to tif using tifffile
-    # imwrite(r"C:\Users\Luke_H\Desktop\large_distance.tif", large_distance.astype(np.uint16))
-
-    # zoom_factors = (binary_image.shape[0] / small_distance.shape[0],
-    #                binary_image.shape[1] / small_distance.shape[1])
-    # large_distance = ndimage.zoom(small_distance, zoom_factors, order=1, mode='nearest')
-    # imwrite(r"C:\Users\Luke_H\Desktop\large_distance2.tif", large_distance.astype(np.uint16))
     # Correct the distances and round to nearest integer
     large_distance = np.round(large_distance * scale_factor).astype(int)
     logger.info(
@@ -4681,9 +4786,13 @@ def analyze_spines_4D(settings, locations, log, logger):
 
     datasetname = os.path.basename(os.path.normpath(locations.input_dir))
 
-    image = imread(locations.input_dir + "/Registered/Registered_images_4D.tif")
+    image = imread(
+        os.path.join(locations.input_dir, "Registered", "Registered_images_4D.tif")
+    )
 
-    labels = imread(locations.input_dir + "/Registered/Registered_labels_4D.tif")
+    labels = imread(
+        os.path.join(locations.input_dir, "Registered", "Registered_labels_4D.tif")
+    )
 
     if image.shape != labels.shape:
         logger.info(log)
@@ -4918,16 +5027,16 @@ def analyze_spines_4D(settings, locations, log, logger):
     all_spines_table.to_csv(locations.tables + "Detected_spines_4D.csv", index=False)
 
     # Create MIP
-    neuron_MIP = io.create_mip_and_save_multichannel_tiff_4d(
+    neuron_MIP = respan_io.create_mip_and_save_multichannel_tiff_4d(
         [neuron, spines, spines_filtered_all, dendrites, skeleton, dendrite_distance],
-        locations.input_dir + "/Registered/Registered_MIPs_4D.tif",
+        os.path.join(locations.input_dir, "Registered", "Registered_MIPs_4D.tif"),
         "float",
         settings,
     )
 
     # Create 4D Labels
     imwrite(
-        locations.input_dir + "/Registered/Detected_spines.tif",
+        os.path.join(locations.input_dir, "Registered", "Detected_spines.tif"),
         spines_filtered_all.astype(np.uint16),
         compression="zlib",
         compressionargs=1,
@@ -4944,8 +5053,11 @@ def analyze_spines_4D(settings, locations, log, logger):
     # if os.path.exists(locations.nnUnet_input): shutil.rmtree(locations.nnUnet_input)
     if os.path.exists(locations.MIPs):
         shutil.rmtree(locations.MIPs)
-    if os.path.exists(locations.validation_dir + "/Registered_segmentation_labels/"):
-        shutil.rmtree(locations.validation_dir + "/Registered_segmentation_labels/")
+    registered_seg_dir = os.path.join(
+        locations.validation_dir, "Registered_segmentation_labels"
+    )
+    if os.path.exists(registered_seg_dir):
+        shutil.rmtree(registered_seg_dir)
 
     # logger.info("Spine analysis complete.\n")
 
@@ -6138,9 +6250,10 @@ def second_pass_annotation(
         dataset_id = matches[0] if matches else None
 
         logger.info("\nPerforming spine refinement on GPU...\n")
-        # create dir locations.nnUnet_2nd_pass+'\labels'
-        if not os.path.exists(locations.nnUnet_2nd_pass + "\labels"):
-            os.makedirs(locations.nnUnet_2nd_pass + "\labels")
+        # create dir locations.nnUnet_2nd_pass/labels
+        labels_dir = os.path.join(locations.nnUnet_2nd_pass, "labels")
+        if not os.path.exists(labels_dir):
+            os.makedirs(labels_dir)
 
         ##uncomment if issues with nnUnet
         # logger.info(f"{settings.nnUnet_conda_path} , {settings.nnUnet_env} , {locations.nnUnet_input}, {locations.labels} , {dataset_id} , {settings.nnUnet_type} , {settings}")
@@ -6149,7 +6262,7 @@ def second_pass_annotation(
             settings.nnUnet_conda_path,
             settings.nnUnet_env,
             locations.nnUnet_2nd_pass,
-            locations.nnUnet_2nd_pass + "\labels",
+            labels_dir,
             dataset_id,
             settings.nnUnet_type,
             settings,
@@ -6159,9 +6272,7 @@ def second_pass_annotation(
         logger.info(f"Updating subvolumes with refined labels...")
 
         # import all tifs in output folder as updated_sub_volumes .tif
-        updated_sub_volumes = import_tiff_files_to_cupy_list(
-            locations.nnUnet_2nd_pass + "\labels"
-        )
+        updated_sub_volumes = import_tiff_files_to_cupy_list(labels_dir)
 
         multi_channel_subvolumes = []
 
@@ -6179,7 +6290,7 @@ def second_pass_annotation(
         # delete nnunet input folder and files
         if settings.save_intermediate_data == False:
             shutil.rmtree(locations.nnUnet_2nd_pass)
-            shutil.rmtree(locations.nnUnet_2nd_pass + "\labels")
+            shutil.rmtree(labels_dir)
 
         # Insert processed subvolumes back into the original image
         logger.info(f"Inserting refined subvolumes back into the original image...")
