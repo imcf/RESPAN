@@ -16,6 +16,7 @@ __download__ = "http://www.github.com/lahmmond/RESPAN"
 
 
 import os
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -30,8 +31,9 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
     logger.info("Validating spine and dendrite detection...")
     logger.info(" ")
 
-    labels1 = labels1 + "/"
-    labels2 = labels2 + "/"
+    # Normalize directory paths
+    labels1 = os.path.normpath(labels1)
+    labels2 = os.path.normpath(labels2)
     # labels 1 = ground truth dir
     # labels 2 = analysis output dirs
 
@@ -39,28 +41,60 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
     # dendrites = 2
     # soma = 3
 
-    gt_files = [file_i for file_i in os.listdir(labels1) if file_i.endswith(".tif")]
+    gt_files = [
+        file_i for file_i in os.listdir(labels1) if file_i.lower().endswith(".tif")
+    ]
     gt_files = sorted(gt_files)
 
     analysis_files = [
-        file_i for file_i in os.listdir(labels2) if file_i.endswith(".tif")
+        file_i for file_i in os.listdir(labels2) if file_i.lower().endswith(".tif")
     ]
     analysis_files = sorted(analysis_files)
 
-    if len(gt_files) != len(analysis_files):
-        raise RuntimeError("Lists are not of equal length.")
+    # Build robust pairing by filename stem (case-insensitive)
+    def _match_label(raw_name, label_list):
+        raw_stem = Path(raw_name).stem.lower()
+        for lbl in label_list:
+            if Path(lbl).stem.lower() == raw_stem:
+                return lbl
+        for lbl in label_list:
+            lbl_stem = Path(lbl).stem.lower()
+            if lbl_stem.startswith(raw_stem) or raw_stem.startswith(lbl_stem):
+                return lbl
+        for lbl in label_list:
+            lbl_stem = Path(lbl).stem.lower()
+            if raw_stem in lbl_stem or lbl_stem in raw_stem:
+                return lbl
+        return None
+
+    pairs = []
+    missing = []
+    for out in analysis_files:
+        match = _match_label(out, gt_files)
+        if match is None:
+            missing.append(out)
+        else:
+            pairs.append((match, out))
+
+    if len(missing) > 0:
+        logger.warning(
+            f"Found {len(missing)} analysis files without matching ground-truth; they will be skipped: {missing}"
+        )
+
+    if len(pairs) == 0:
+        raise RuntimeError("No matching ground-truth/analysis file pairs found.")
 
     spine_summary = pd.DataFrame()
     comp_spine_table = pd.DataFrame()
     comp_spine_summary = pd.DataFrame()
 
-    for file in range(len(analysis_files)):
+    for idx, (gt_file, analysis_file) in enumerate(pairs):
         logger.info(
-            f" Comparing image pair {file + 1} of {len(analysis_files)} \n  Ground Truth Image:{gt_files[file]} \n  Analysis Output Image:{analysis_files[file]}"
+            f" Comparing image pair {idx + 1} of {len(pairs)} \n  Ground Truth Image:{gt_file} \n  Analysis Output Image:{analysis_file}"
         )
 
-        gt = imread(labels1 + gt_files[file])
-        output = imread(labels2 + analysis_files[file])
+        gt = imread(os.path.join(labels1, gt_file))
+        output = imread(os.path.join(labels2, analysis_file))
 
         logger.info(f"  Ground truth data has shape {gt.shape}")
         logger.info(f"  Analysis output data has shape {output.shape}")
@@ -129,7 +163,7 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
             settings.neuron_spine_dist,
             settings,
             locations,
-            analysis_files[file],
+            analysis_file,
             logger,
         )
 
@@ -205,7 +239,7 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
             settings.neuron_spine_dist,
             settings,
             locations,
-            analysis_files[file],
+            analysis_file,
             logger,
         )
 
@@ -219,7 +253,7 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
         ## Original Code from simple validation
 
         # shorten filename
-        filename = analysis_files[file].replace(".tif", "")
+        filename = os.path.splitext(analysis_file)[0]
 
         # create empty df
         comp_spine_table = pd.DataFrame({"Filename": [filename]})
@@ -278,11 +312,11 @@ def validate_analysis(labels1, labels2, settings, locations, logger):
             [comp_spine_summary, comp_spine_table], ignore_index=True
         )
 
-        logger.info(f"Spine comparison complete for file {analysis_files[file]}\n")
+        logger.info(f"Spine comparison complete for file {analysis_file}\n")
 
     # date to add to file name
     date = pd.to_datetime("today").strftime("%Y-%m-%d")
-    evaluation_file = os.path.join(locations, f"Analysis_Evaluation_{date}.csv")
+    evaluation_file = os.path.join(locations.tables, f"Analysis_Evaluation_{date}.csv")
     comp_spine_summary.to_csv(evaluation_file, index=False)
     logger.info("\nRESPAN validation complete.\n")
 
