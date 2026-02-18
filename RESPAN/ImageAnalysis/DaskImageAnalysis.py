@@ -65,7 +65,7 @@ from skimage.measure._regionprops import RegionProperties
 from zarr.errors import ArrayNotFoundError
 
 import RESPAN.ImageAnalysis.ImageAnalysis as imgan
-import RESPAN.ImageAnalysis.IO as io
+import RESPAN.ImageAnalysis.IO as respan_io
 import RESPAN.ImageAnalysis.Tables as tables
 from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
@@ -607,7 +607,9 @@ def image_to_ome_zarr(
         shape = data.shape  # C Z Y X
         dtype = data.dtype
         nbytes = (
-            data.nbytes if hasattr(data, "nbytes") else (math.prod(shape) * dtype.itemsize)
+            data.nbytes
+            if hasattr(data, "nbytes")
+            else (math.prod(shape) * dtype.itemsize)
         )
         axes = "czyx"
 
@@ -1641,7 +1643,7 @@ def spine_and_whole_neuron_processing(
     else:
         if settings.save_val_data == True:
             logger.info("    Saving validation MIP image...")
-            io.create_mip_and_save_multichannel_tiff(
+            respan_io.create_mip_and_save_multichannel_tiff(
                 [
                     neuron,
                     spines,
@@ -1659,7 +1661,7 @@ def spine_and_whole_neuron_processing(
 
         if settings.save_intermediate_data == True:
             logger.info("    Saving validation volume image...")
-            io.create_and_save_multichannel_tiff(
+            respan_io.create_and_save_multichannel_tiff(
                 [
                     neuron,
                     spines,
