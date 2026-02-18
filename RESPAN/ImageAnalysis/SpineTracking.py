@@ -27,8 +27,9 @@ from scipy.ndimage import gaussian_filter
 from scipy.spatial import distance
 from skimage import exposure, filters, morphology
 from skimage.measure import label
-from tifffile import imread
 
+import RESPAN.ImageAnalysis.IO as respan_io
+from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
 # no longer using antspy
@@ -65,14 +66,14 @@ def track_spines(settings, locations, log, logger):
 
     save_as_4d_tiff_elastix(
         registered_images,
-        locations.input_dir + "/Registered/",
+        os.path.join(locations.input_dir, "Registered"),
         "Registered_images_4d.tif",
         "Registered_images_4d_MIP.tif",
         logger,
     )
     save_as_4d_tiff_elastix(
         registered_labels,
-        locations.input_dir + "/Registered/",
+        os.path.join(locations.input_dir, "Registered"),
         "Registered_labels_4d.tif",
         "Registered_labels_4d_MIP.tif",
         logger,
@@ -88,17 +89,19 @@ def enhance_for_reg(inputdir, outputdir, settings, logger):
     if not os.path.exists(outputdir):
         os.makedirs(outputdir)
 
-    files = [file_i for file_i in os.listdir(inputdir) if file_i.endswith(".tif")]
+    files = [
+        file_i for file_i in os.listdir(inputdir) if respan_io.is_image_file(file_i)
+    ]
     files = sorted(files)
 
     for file in range(len(files)):
-        image = imread(inputdir + files[file])
+        image = imread(os.path.join(inputdir, files[file]))
         image = contrast_stretch(image, pmin=2, pmax=97)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             imwrite(
-                outputdir + files[file],
+                os.path.join(outputdir, files[file]),
                 image.astype(np.uint16),
                 imagej=True,
                 photometric="minisblack",
