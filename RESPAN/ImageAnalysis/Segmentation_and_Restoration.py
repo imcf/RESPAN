@@ -30,7 +30,7 @@ from skimage import exposure
 from skimage.transform import resize
 
 import RESPAN.ImageAnalysis.ImageAnalysis as imgan
-import RESPAN.ImageAnalysis.IO as io
+import RESPAN.ImageAnalysis.IO as respan_io
 import RESPAN.Main.Main as main
 from RESPAN.ImageAnalysis.IO import imread
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
@@ -66,12 +66,12 @@ def restore_and_segment(settings, locations, logger):
     if settings.image_restore == False and settings.axial_restore == True:
         # restore axial resolution from raw data
         axial_restore_image(locations.input_dir, settings, locations, logger)
-        data = locations.restored + "/selfnet/"
+        data = os.path.join(locations.restored, "selfnet")
 
     elif settings.image_restore == True and settings.axial_restore == True:
         # restore axial resolution on CARE restored data
         axial_restore_image(data, settings, locations, logger)
-        data = locations.restored + "/selfnet/"
+        data = os.path.join(locations.restored, "selfnet")
 
     else:
         data = locations.input_dir
@@ -257,13 +257,15 @@ def restore_image(inputdir, settings, locations, logger):
     )
     logger.info("Restoring images with CARE models...")
 
-    files = [file_i for file_i in os.listdir(inputdir) if io.is_image_file(file_i)]
+    files = [
+        file_i for file_i in os.listdir(inputdir) if respan_io.is_image_file(file_i)
+    ]
     files = sorted(files)
 
     for file in range(len(files)):
         logger.info(f" Restoring image {files[file]} ")
 
-        image = imread(inputdir + files[file])
+        image = imread(os.path.join(inputdir, files[file]))
         logger.info(f"  Raw data has shape {image.shape}")
 
         image = imgan.check_image_shape(image, logger)
@@ -327,7 +329,7 @@ def restore_image(inputdir, settings, locations, logger):
             warnings.simplefilter("ignore")
             if settings.validation_format == "tif":
                 imwrite(
-                    locations.restored + files[file],
+                    os.path.join(locations.restored, files[file]),
                     restored,
                     compression="zlib",
                     compressionargs=1,
@@ -437,12 +439,16 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
     # data can be raw data OR restored data so check channels
 
     files = [
-        file_i for file_i in os.listdir(locations.input_dir) if io.is_image_file(file_i)
+        file_i
+        for file_i in os.listdir(locations.input_dir)
+        if respan_io.is_image_file(file_i)
     ]
     files = sorted(files)
 
     label_files = [
-        file_i for file_i in os.listdir(locations.labels) if io.is_image_file(file_i)
+        file_i
+        for file_i in os.listdir(locations.labels)
+        if respan_io.is_image_file(file_i)
     ]
 
     # create empty arrays to capture dims and padding info
@@ -451,7 +457,7 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
 
     if len(files) == len(label_files):
         logger.info(
-            f"  *Spines and dendrites already detected. \nDelete \Validation_Data\Segmentation_Labels if you wish to regenerate."
+            f"  *Spines and dendrites already detected. \nDelete Validation_Data/Segmentation_Labels if you wish to regenerate."
         )
         stdout = None
         settings.prev_labels = True
@@ -470,7 +476,7 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 f"   Preparing image {file + 1} of {len(files)} - {files[file]}"
             )
 
-            image = imread(inputdir + files[file])
+            image = imread(os.path.join(inputdir, files[file]))
             logger.info(f"   Raw data has shape: {image.shape}")
 
             image = imgan.check_image_shape(image, logger)
@@ -677,13 +683,13 @@ def nnunet_create_labels(inputdir, settings, locations, logger):
                 settings.padding_req[file] == 1
             ):  # and settings.prev_labels == False and settings.original_shape[0] != None:
                 logger.info(f"  Unpadding image {files[file]}")
-                image = imread(locations.labels + files[file])
+                image = imread(os.path.join(locations.labels, files[file]))
                 image = image[2:-2, :, :]
 
                 logger.info(f"  Image {files[file]} has shape: {image.shape}")
 
                 imwrite(
-                    locations.labels + files[file],
+                    os.path.join(locations.labels, files[file]),
                     image.astype(np.uint8),
                     compression="zlib",
                     compressionargs=1,
