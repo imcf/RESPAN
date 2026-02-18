@@ -43,7 +43,7 @@ from skimage.util import img_as_ubyte
 import RESPAN.ImageAnalysis.ImageAnalysis as imgan
 
 # low-level helpers used by GUI and scripts
-import RESPAN.ImageAnalysis.IO as io
+import RESPAN.ImageAnalysis.IO as respan_io
 import RESPAN.ImageAnalysis.ModelTraining as mt
 import RESPAN.ImageAnalysis.Segmentation_and_Restoration as sr
 import RESPAN.ImageAnalysis.SpineTracking as strk
@@ -89,6 +89,6 @@ __all__ = [
     "val",
     "strk",
     "mt",
-    "io",
+    "respan_io",
     "sr",
 ]
