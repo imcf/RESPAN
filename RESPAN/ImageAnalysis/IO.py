@@ -1,5 +1,19 @@
 import numpy as np
+
+# Monkeypatch aicspylibczi to fix AttributeError: 'CziFile' object has no attribute 'dims_shape'
+# which occurs in some versions of aicsimageio and aicspylibczi
+try:
+    import aicspylibczi
+
+    if hasattr(aicspylibczi.CziFile, "get_dims_shape") and not hasattr(
+        aicspylibczi.CziFile, "dims_shape"
+    ):
+        aicspylibczi.CziFile.dims_shape = aicspylibczi.CziFile.get_dims_shape
+except ImportError:
+    pass
+
 from aicsimageio import AICSImage
+from bioio import BioImage
 
 from RESPAN.ImageAnalysis.tifffile_compat import imwrite
 
@@ -32,19 +46,28 @@ def is_image_file(filename):
 
 def imread(path, logger=None):
     """
-    Read an image from disk using AICSImageIO.
+    Read an image from disk using BioIO/AICSImageIO.
     Supports many formats (.czi, .nd2, .lif, .tif, etc.)
     Returns a numpy array in ZCYX format if possible.
     """
     if logger:
-        logger.info(f"  Reading image with AICSImageIO: {path}")
+        logger.info(f"  Reading image: {path}")
 
-    img = AICSImage(path)
+    try:
+        # Prefer BioImage (modern BioIO)
+        img = BioImage(path)
+    except Exception:
+        # Fallback to AICSImage
+        img = AICSImage(path)
 
-    # RESPAN generally expects ZCYX or CZYX and uses check_image_shape to normalize.
-    # We'll provide ZCYX as a sensible default for AICSImageIO to match common expectations.
+    # RESPAN generally expects CZYX or ZCYX and uses check_image_shape to normalize.
+    # We'll provide CZYX as a sensible default to match the Dask pipeline.
     # S=0, T=0 for first scene/timepoint.
-    data = img.get_image_data("ZCYX", S=0, T=0)
+    data = img.get_image_data("CZYX", S=0, T=0)
+
+    # Convert to numpy if it's a dask array (default for BioImage/AICSImage)
+    if hasattr(data, "compute"):
+        data = data.compute()
 
     return data
 
